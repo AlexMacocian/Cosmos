@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<Rectangle>
+  <Name>BaseRectangle</Name>
+  <Width>25%</Width>
+  <Height>25%</Height>
+  <Background>#CC000000</Background>
+  <Foreground>White</Foreground>
+  <FontSize>12</FontSize>
+  <HorizontalTextAlignment>Left</HorizontalTextAlignment>
+</Rectangle>
