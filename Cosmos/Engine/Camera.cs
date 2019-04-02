@@ -66,7 +66,7 @@ namespace Cosmos.Engine
 
         public void MoveCamera(Vector2 movePosition)
         {
-            Vector2 newPosition = Position + movePosition;
+            Vector2 newPosition = new Vector2((int)Math.Round(Position.X + movePosition.X), (int)Math.Round(Position.Y + movePosition.Y));
             Position = newPosition;
             UpdateMatrix();
         }
@@ -77,7 +77,7 @@ namespace Cosmos.Engine
             {
                 Vector2 delta = panTarget - Position;
                 delta /= 10;
-                if(Math.Abs(delta.X) < 1 && Math.Abs(delta.Y) < 1)
+                if(Math.Abs(delta.X) < 10 && Math.Abs(delta.Y) < 10)
                 {
                     panning = false;
                 }
@@ -107,6 +107,7 @@ namespace Cosmos.Engine
             {
                 followBody = body;
                 following = false;
+                panning = false;
             }
         }
     }

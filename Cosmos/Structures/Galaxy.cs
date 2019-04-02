@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,7 +21,7 @@ namespace Cosmos.Structures
         private volatile int iterations = 0;
         private int width, height;
         private int minX, minY, maxX, maxY;
-        private bool running = false;
+        private bool running = false, calculating = false;
         volatile public List<CelestialBody> Bodies;
         public int Count;
         public Barnes_Hut.BHNode root;
@@ -62,49 +63,38 @@ namespace Cosmos.Structures
         {
             this.width = width;
             this.height = height;
-            double galaxyradius;
-            if (width > height)
-            {
-                galaxyradius = height / 2;
-            }
-            else
-            {
-                galaxyradius = width / 2;
-            }
             root = new Barnes_Hut.BHNode(int.MaxValue, int.MaxValue);
             Bodies = new List<CelestialBody>(systems * maxBodsPerSys);
             Count = N;
             double totalMass = 0;
             for (int i = 0; i < systems; i++)
             {
-                double mass, density;
                 double posX, posY;
                 double theta = Rand.NextDouble() * (Math.PI * 2);//GET VALUE BETWEEN 0 AND 2PI
-                double radius = Math.Max(50, Rand.NextDouble() * galaxyradius / 2);
+                double radius = Rand.Next(0, Math.Min(width, height) / 2);
                 posX = radius * Math.Cos(theta);
                 posY = radius * Math.Sin(theta);
-                mass = Rand.Next(1, 1000);
-                mass *= 10e4;
-                density = mass / 1000;
-                CelestialBody body = new CelestialBody(i, posX, posY, mass, density);
-                Bodies.Add(body);
-                totalMass += mass;
+                double randomValue = Rand.Next(0, 100000000);
+                randomValue /= 100000000;
+                Star star = Star.GenerateRandomStar(i, randomValue, posX, posY);
+                Bodies.Add(star);
+                totalMass += star.mass;
                 double bodies = Rand.Next(minBodsPerSys, maxBodsPerSys);
                 for(int j = 0; j < bodies; j++)
                 {
-                    double mass2 = Rand.Next(1, 100);
-                    double d2 = Rand.Next(1, 10);
-                    d2 = mass2 / 10;
+                    double rand = Rand.NextDouble();
+                    double mass2 = Constants.EARTH_SIZE * (0.2 + rand * 50);
+                    double d2 = mass2;
                     double theta2 = Rand.NextDouble() * (Math.PI * 2);
                     double posX2, posY2;
-                    double radius2 = Rand.Next((int)Math.Ceiling(body.size), (int)Math.Ceiling(body.size * 2));
+                    double radius2 = Rand.Next((int)star.size, (int)(star.size * 1.4));
                     posX2 = radius2 * Math.Cos(theta2);
                     posY2 = radius2 * Math.Sin(theta2);
                     posX2 += posX;
                     posY2 += posY;
                     CelestialBody satellite = new CelestialBody(systems + (i * j), posX2, posY2, mass2, d2);
                     Bodies.Add(satellite);
-                    GenerateOrbitalAcceleration(body, satellite);
+                    GenerateOrbitalAcceleration(star, satellite);
                     totalMass += mass2;
                 }
             }
@@ -273,23 +263,21 @@ namespace Cosmos.Structures
 
 
 
-
-
-            while (!Monitor.TryEnter(quadLock)){
+            while (!Monitor.TryEnter(quadLock))
+            {
 
             }
             root.RootInsertBatchThreaded(Bodies);
 
             Monitor.Exit(quadLock);
 
-            Parallel.ForEach(Bodies, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1}, (body) =>
-            {
-                if (!body.MarkedToRemove)
-                {
-                    root.CalculateForce(body);
-                }
-            });
-
+            Parallel.ForEach(Bodies, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, (body) =>
+             {
+                 if (!body.MarkedToRemove)
+                 {
+                     root.CalculateForce(body);
+                 }
+             });
 
             Parallel.ForEach(Bodies, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, (body) =>
             {
@@ -324,7 +312,7 @@ namespace Cosmos.Structures
                     {           
                         if (requestUpdate)
                         {
-                            UpdateGalaxyOptimized();
+                            UpdateGalaxyOptimizedWithSkipIterations();
                         }
                     }
                 });
@@ -335,6 +323,97 @@ namespace Cosmos.Structures
             {
                 requestUpdate = true;
             }
+        }
+
+        public void UpdateGalaxyOptimizedWithSkipIterations()
+        {
+            //RECREATE LIST WITHOUT REMOVED OBJECTS
+            if (toRemove > 0)
+            {
+                List<CelestialBody> newList = new List<CelestialBody>(N - toRemove);
+                foreach (CelestialBody body in Bodies)
+                {
+                    if (!body.MarkedToRemove)
+                    {
+                        newList.Add(body);
+                    }
+                }
+                N = newList.Count;
+                Bodies = newList;
+                Interlocked.Exchange(ref toRemove, 0);
+            }
+
+            if (iterations % Constants.ITERATIONS_PER_CALCULATION == 0)
+            {
+                if (!calculating)
+                {
+                    Task.Factory.StartNew(() =>
+                    {
+                        if (Galaxy.Instance.Iterations % 50 == 0 || toRemove > 500) //RECREATE TREE STRUCTURE
+                        {
+                            while (!Monitor.TryEnter(quadLock))
+                            {
+
+                            }
+                            root.Reset();
+                            Monitor.Exit(quadLock);
+                            GC.Collect();
+
+                        }
+                        else
+                        {
+                            while (!Monitor.TryEnter(quadLock))
+                            {
+
+                            }
+                            root.Clear();
+                            Monitor.Exit(quadLock);
+                        }
+
+
+                        while (!Monitor.TryEnter(quadLock))
+                        {
+
+                        }
+                        root.RootInsertBatchThreaded(Bodies);
+
+                        Monitor.Exit(quadLock);
+                        calculating = true;
+                        Parallel.ForEach(Bodies, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, (body) =>
+                        {
+                            if (!body.MarkedToRemove)
+                            {
+                                root.CalculateForce(body);
+                            }
+                        });
+                        calculating = false;
+                    });
+                }
+                else
+                {
+                    Constants.ITERATIONS_PER_CALCULATION++;
+                }
+            }
+
+            Parallel.ForEach(Bodies, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, (body) =>
+            {
+                if (body.MarkedToRemove)
+                {
+                    Interlocked.Increment(ref toRemove);//INCREMENT THE NUMBER OF NODES THAT WILL BE REMOVED
+                }
+                else
+                {
+                    body.Update();
+                    if (body.OutOfBounds)
+                        if (!body.MarkedToRemove)
+                        {
+                            body.MarkToRemove();
+                            Interlocked.Increment(ref toRemove);//INCREMENT THE NUMBER OF NODES THAT WILL BE REMOVED
+                        }
+                }
+            });
+            Interlocked.Increment(ref iterations);
+            requestUpdate = false;
         }
 
         public void Stop()
@@ -380,7 +459,7 @@ namespace Cosmos.Structures
             ax /= distance;
             ay /= distance;
 
-            double strength = Math.Sqrt(Constants.G * body.mass / distance);
+            double strength = Math.Sqrt(Constants.G * body.mass / distance / distance);
 
             ax *= strength;
             ay *= strength;

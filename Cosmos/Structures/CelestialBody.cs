@@ -9,10 +9,11 @@ namespace Cosmos.Structures
     public class CelestialBody
     {
         public int id;
-        public double posX, posY, vX, vY, aX, aY, size, mass, density;
+        public double posX, posY, vX, vY, aX, aY, size, mass;
         public Barnes_Hut.BHNode containingNode;
         private bool outOfBounds;
         private volatile bool markedToRemove;
+        private double sizepercmass;
 
         public bool OutOfBounds
         {
@@ -30,7 +31,7 @@ namespace Cosmos.Structures
             }
         }
 
-        public CelestialBody(int id, double posX, double posY, double mass, double density)
+        public CelestialBody(int id, double posX, double posY, double mass, double size)
         {
             this.id = id;
             vX = 0;
@@ -40,8 +41,8 @@ namespace Cosmos.Structures
             this.posX = posX;
             this.posY = posY;
             this.mass = mass;
-            this.density = density;
-            this.size = mass / density / 10;
+            this.size = size;
+            sizepercmass = size / mass;
         }
 
         public void ApplyForce(double fx, double fy)
@@ -111,6 +112,35 @@ namespace Cosmos.Structures
             }
         }
 
+        public void ResolveCollisionWithAbsorption(CelestialBody otherBody)
+        {
+            if (otherBody.mass < this.mass)
+            {
+                double massToGive = otherBody.mass / 10;
+                otherBody.mass -= massToGive;
+                this.mass += massToGive;
+                if(otherBody.mass < 1)
+                {
+                    double totalMass = otherBody.mass + this.mass;
+                    this.mass = totalMass;
+                    otherBody.MarkToRemove();
+                }
+
+            }
+            else
+            {
+                double massToGive = this.mass / 5;
+                this.mass -= massToGive;
+                otherBody.mass += massToGive;
+                if (this.mass < 1)
+                {
+                    double totalMass = otherBody.mass + this.mass;
+                    otherBody.mass = totalMass;
+                    MarkToRemove();
+                }
+            }
+        }
+
         public void Update()
         {
             aX *= Constants.TIME_CONSTANT;
@@ -154,6 +184,7 @@ namespace Cosmos.Structures
             {
                 outOfBounds = true;
             }
+            size = mass * sizepercmass;
         }
 
         /// <summary>

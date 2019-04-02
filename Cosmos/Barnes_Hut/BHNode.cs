@@ -562,10 +562,10 @@ namespace Cosmos.Barnes_Hut
             {
                 return;
             }
-            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Left, boundrect.Top, boundrect.Width, 1), Microsoft.Xna.Framework.Color.Green);
-            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Left, boundrect.Bottom, boundrect.Width, 1), Microsoft.Xna.Framework.Color.Green);
-            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Left, boundrect.Top, 1, boundrect.Height), Microsoft.Xna.Framework.Color.Green);
-            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Right, boundrect.Top, 1, boundrect.Height), Microsoft.Xna.Framework.Color.Green);
+            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Left, boundrect.Top, boundrect.Width, (int)(1 / Camera.Instance.Zoom)), Microsoft.Xna.Framework.Color.Green);
+            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Left, boundrect.Bottom, boundrect.Width, (int)(1 / Camera.Instance.Zoom)), Microsoft.Xna.Framework.Color.Green);
+            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Left, boundrect.Top, (int)(1 / Camera.Instance.Zoom), boundrect.Height), Microsoft.Xna.Framework.Color.Green);
+            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Right, boundrect.Top, (int)(1 / Camera.Instance.Zoom), boundrect.Height), Microsoft.Xna.Framework.Color.Green);
 
             lock (treelock)
             {
@@ -630,13 +630,13 @@ namespace Cosmos.Barnes_Hut
                     {
                         double fx = 0, fy = 0;
                         childBody.Attract(body, out fx, out fy);
-                        body.ApplyForce(fx, fy);
+                        body.ApplyForce(fx * Constants.ITERATIONS_PER_CALCULATION, fy * Constants.ITERATIONS_PER_CALCULATION);
                     }
                     else
                     {
-                        if (body.Conflicts(childBody))
+                        if (body.Collides(childBody))
                         {
-                            body.ResolveConflict(childBody);
+                            body.ResolveCollisionWithAbsorption(childBody);
                         }
                     }
                 }
@@ -659,7 +659,7 @@ namespace Cosmos.Barnes_Hut
                         dy /= length;
                         dx *= strength;
                         dy *= strength;
-                        body.ApplyForce(dx, dy);
+                        body.ApplyForce(dx * Constants.ITERATIONS_PER_CALCULATION, dy * Constants.ITERATIONS_PER_CALCULATION);
                     }
                     else
                     {

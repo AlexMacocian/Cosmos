@@ -15,6 +15,7 @@ using System.Threading.Tasks;
 using MonoMenu.Engine;
 using static Cosmos.Structures.Galaxy;
 using System.Text;
+using Cosmos.Effects;
 
 namespace Cosmos
 {
@@ -23,6 +24,7 @@ namespace Cosmos
     /// </summary>
     public class Game1 : Game
     {
+        BloomFilter bloomFilter;
         Point clickPos;
         Point prevMousePos;
         float prevScrollWheelValue;
@@ -36,6 +38,7 @@ namespace Cosmos
         RenderTarget2D rt;
         MonoMenu.Engine.MonoMenu Menu;
         RenderTarget2D monoRenderTarget;
+        RenderTarget2D preProcessRenderTarget;
 
         public Game1()
         {
@@ -53,15 +56,18 @@ namespace Cosmos
         /// </summary>
         protected override void Initialize()
         {
+            bloomFilter = new BloomFilter();
+
             var options = new ParallelOptions();
             options.MaxDegreeOfParallelism = Environment.ProcessorCount;
             graphics.PreferredBackBufferHeight = 768;
             graphics.PreferredBackBufferWidth = 1366;
             graphics.ApplyChanges();
-            Galaxy.Instance = new Galaxy(3000, 3000, 5, 500, 1000);
+            Galaxy.Instance = new Galaxy(500000000, 500000000, 1000, 0, 50);
             // TODO: Add your initialization logic here
             MonoMenu.Engine.Monitor.Initialize();
             monoRenderTarget = new RenderTarget2D(GraphicsDevice, GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
+            preProcessRenderTarget = new RenderTarget2D(GraphicsDevice, GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
             Menu = new MonoMenu.Engine.MonoMenu(graphics.GraphicsDevice, Content);
             Camera.Instance = new Camera(graphics.GraphicsDevice.Viewport);
             Camera.Instance.Follow(Galaxy.Instance.Bodies[0]);
@@ -85,8 +91,12 @@ namespace Cosmos
             circle = new Circle(GraphicsDevice);
             pixel = new Texture2D(GraphicsDevice, 1, 1, false, SurfaceFormat.Color);
             pixel.SetData(new[] { Color.White });
-            Menu.Load("Overlay1.xml");
+            Menu.Load("Overlay1.xaml");
             MonoMenu.Engine.MonoMenu.defaultFont = font;
+            bloomFilter.Load(GraphicsDevice, Content, GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
+            bloomFilter.BloomPreset = BloomFilter.BloomPresets.Small;
+            bloomFilter.BloomThreshold = 0.65f;
+            bloomFilter.BloomStrengthMultiplier = 1.5f;
             // TODO: use this.Content to load your game content here
         }
 
@@ -98,6 +108,7 @@ namespace Cosmos
         {
             // TODO: Unload any non ContentManager content here
             Galaxy.Instance.Stop();
+            bloomFilter.Dispose();
         }
 
         /// <summary>
@@ -128,6 +139,28 @@ namespace Cosmos
                     passedTime = 0;
                 }
 
+            }
+
+            if (Keyboard.GetState().IsKeyDown(Keys.Enter))
+            {
+                CelestialBody target = Galaxy.Instance.Bodies[1];
+                foreach(CelestialBody potential in Galaxy.Instance.Bodies)
+                {
+                    if (potential is Star)
+                    {
+
+                    }
+                    else
+                    {
+                        double targetDistance = Math.Pow(target.posX - Camera.Instance.Position.X, 2) + Math.Pow(target.posY - Camera.Instance.Position.Y, 2);
+                        double potentialDistance = Math.Pow(potential.posX - Camera.Instance.Position.X, 2) + Math.Pow(potential.posY - Camera.Instance.Position.Y, 2);
+                        if (potentialDistance < targetDistance)
+                        {
+                            target = potential;
+                        }
+                    }
+                }
+                Camera.Instance.Follow(target);
             }
 
             if (Keyboard.GetState().IsKeyDown(Keys.OemPlus))
@@ -173,7 +206,16 @@ namespace Cosmos
             if (Camera.Instance.Following != null)
             {
                 following = "Following: " + Camera.Instance.Following.id;
-                mass = "Mass: " + Camera.Instance.Following.mass.ToString("0.##E+0", CultureInfo.InvariantCulture) + " Earth Masses";
+                if(Camera.Instance.Following is Star)
+                {
+                    double m = Camera.Instance.Following.mass / Constants.SUN_MASS;
+                    mass = "Mass: " + m.ToString("0.##E+0", CultureInfo.InvariantCulture) + " Sun Masses";
+                }
+                else
+                {
+                    double m = Camera.Instance.Following.mass / Constants.EARTH_SIZE; 
+                    mass = "Mass: " + m.ToString("0.##E+0", CultureInfo.InvariantCulture) + " Earth Masses";
+                }
                 pxpy = "pX: " + Camera.Instance.Following.posX + " - pY: " + Camera.Instance.Following.posY;
                 vxvy = "vX: " + Camera.Instance.Following.vX + " - vY: " + Camera.Instance.Following.vY;
             }
@@ -192,7 +234,7 @@ namespace Cosmos
             Menu.Draw(spriteBatch, monoRenderTarget);
 
 
-            GraphicsDevice.SetRenderTarget(null);
+            GraphicsDevice.SetRenderTarget(preProcessRenderTarget);
             // TODO: Add your drawing code here
             spriteBatch.Begin(SpriteSortMode.Deferred, null, null, null, null, null, cameraTransf);
 
@@ -200,7 +242,7 @@ namespace Cosmos
 
             foreach (CelestialBody body in Galaxy.Instance.Bodies)
             {
-                Rectangle destRect = new Microsoft.Xna.Framework.Rectangle((int)(body.posX) - (int)(body.size / 2), (int)(body.posY) - (int)(body.size / 2), (int)body.size, (int)body.size);
+                Rectangle destRect = new Microsoft.Xna.Framework.Rectangle((int)Math.Round(body.posX) - (int)Math.Round(body.size / 2), (int)Math.Round(body.posY) - (int)Math.Round(body.size / 2), (int)body.size, (int)body.size);
                 if (Camera.Instance.VisibleArea.Contains(destRect) || Camera.Instance.VisibleArea.Intersects(destRect))
                 {            
                     if (destRect.Contains(mClkPos) && leftMousePressed)
@@ -208,7 +250,12 @@ namespace Cosmos
                         found = true;
                         Camera.Instance.Follow(body);
                     }
-                    spriteBatch.Draw(circle.CircleText, destRect, Color.White);
+                    Color color = Color.Green;
+                    if(body is Star)
+                    {
+                        color = GetColor(body as Star);
+                    }
+                    spriteBatch.Draw(circle.CircleText, destRect, color);
                     //spriteBatch.Draw(circle.CircleText, new Microsoft.Xna.Framework.Rectangle((int)(body.Position.X + graphics.PreferredBackBufferWidth / 2 - 2.5), (int)(body.Position.Y + graphics.PreferredBackBufferHeight / 2 - 2.5), 5, 5), Color.Red);
                 }
             }
@@ -231,7 +278,13 @@ namespace Cosmos
             #endregion
 
             spriteBatch.End();
-            spriteBatch.Begin();
+
+            Texture2D bloom = bloomFilter.Draw(preProcessRenderTarget, graphics.PreferredBackBufferWidth, graphics.PreferredBackBufferHeight);
+
+            GraphicsDevice.SetRenderTarget(null);
+            spriteBatch.Begin(SpriteSortMode.Texture, BlendState.Additive);
+            spriteBatch.Draw(preProcessRenderTarget, new Vector2(0, 0), Color.White);
+            spriteBatch.Draw(bloom, new Vector2(-3f, -3f), Color.White);
             spriteBatch.Draw(pixel, new Rectangle(new Point(MouseInput.MousePosition.X - 2, MouseInput.MousePosition.Y - 2), new Point(4, 4)), Color.Red);
             spriteBatch.Draw(monoRenderTarget, new Rectangle(0, 0, monoRenderTarget.Width, monoRenderTarget.Height), Color.White);
             spriteBatch.End();
@@ -250,6 +303,29 @@ namespace Cosmos
             h = MathHelper.Clamp(h, 0, 0.63f);
             l = MathHelper.Clamp(l, 0.4f, 1f);
             return Helper.HSLtoRGB(h, 0, l);
+        }
+
+        private Color GetColor(Star star)
+        {
+            switch (star.starClass)
+            {
+                case Star.Class.O:
+                    return Color.FromNonPremultiplied(150, 180, 200, 255);
+                case Star.Class.B:
+                    return Color.Cyan;
+                case Star.Class.A:
+                    return Color.LightBlue;
+                case Star.Class.F:
+                    return Color.Wheat;
+                case Star.Class.G:
+                    return Color.Yellow;
+                case Star.Class.K:
+                    return Color.Orange;
+                case Star.Class.M:
+                    return Color.OrangeRed;
+                default:
+                    return Color.Red;
+            }
         }
 
         private void InputLeftMouseClick(object sender, EventArgs e)
@@ -275,7 +351,7 @@ namespace Cosmos
 
         private void InputDragging(object sender, Point delta)
         {
-            Camera.Instance.MoveCamera(new Vector2(-delta.X / Camera.Instance.Zoom, -delta.Y / Camera.Instance.Zoom));
+            Camera.Instance.MoveCamera(new Vector2((float)-delta.X / Camera.Instance.Zoom, (float)-delta.Y / Camera.Instance.Zoom));
             Camera.Instance.Follow(null);
         }
     }
