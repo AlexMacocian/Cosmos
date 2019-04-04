@@ -17,6 +17,22 @@ namespace Cosmos.Content
             this.CircleText = createCircleText(100, dev);
         }
 
+        public int Radius
+        {
+            get
+            {
+                return 50;
+            }
+        }
+
+        public int Size
+        {
+            get
+            {
+                return 100;
+            }
+        }
+
         public Texture2D CircleText
         {
             get

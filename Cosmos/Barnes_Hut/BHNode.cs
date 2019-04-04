@@ -555,7 +555,7 @@ namespace Cosmos.Barnes_Hut
             }
         }
 
-        public void DrawOutline(SpriteBatch spritebatch, Texture2D pixeltext, int screenwidth, int screenheight, Rectangle screenBounds)
+        public void DrawOutline(SpriteBatch spritebatch, Texture2D pixeltext, int screenwidth, int screenheight, RectangleD screenBounds)
         {
             Rectangle boundrect = new Rectangle((int)(cx - width / 2), (int)(cy - height / 2), (int)(width), (int)(height));
             if (!screenBounds.Intersects(boundrect))

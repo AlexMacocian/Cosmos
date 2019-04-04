@@ -119,5 +119,15 @@ namespace Cosmos
                                             start.B + (stepB * i));
             }
         }
+
+        unsafe public static float Fast_Sqrt(float x)
+        {
+            uint i = *(uint*)&x;
+            // adjust bias
+            i += 127 << 23;
+            // approximation of square root
+            i >>= 1;
+            return *(float*)&i;
+        }
     }
 }

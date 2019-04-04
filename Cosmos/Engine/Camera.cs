@@ -13,10 +13,11 @@ namespace Cosmos.Engine
     {
         public static Camera Instance;
         public float Zoom { get { return zoom; } set { zoom = value; UpdateMatrix(); } }
-        public Vector2 Position { get; set; }
+        public Vector2D Position { get; set; }
         public Rectangle Bounds { get; protected set; }
-        public Rectangle VisibleArea { get; protected set; }
-        public Matrix Transform { get; protected set; }
+        public RectangleD VisibleArea { get; protected set; }
+        public MatrixD Transform { get; protected set; }
+        public static double OffsetX, OffsetY;
         public CelestialBody Following
         {
             get
@@ -27,46 +28,52 @@ namespace Cosmos.Engine
 
         private float currentMouseWheelValue, previousMouseWheelValue, zoom, previousZoom;
         private bool panning = false, following = false;
-        private Vector2 panTarget;
+        private Vector2D panTarget;
         private CelestialBody followBody;
 
         public Camera(Viewport viewport)
         {
             Bounds = viewport.Bounds;
             Zoom = 1f;
-            Position = Vector2.Zero;
+            Position = Vector2D.Zero;
             panTarget = Position;
         }
 
         private void UpdateVisibleArea()
         {
-            var inverseViewMatrix = Matrix.Invert(Transform);
+            var inverseViewMatrix = MatrixD.Invert(Transform);
 
-            var tl = Vector2.Transform(Vector2.Zero, inverseViewMatrix);
-            var tr = Vector2.Transform(new Vector2(Bounds.X, 0), inverseViewMatrix);
-            var bl = Vector2.Transform(new Vector2(0, Bounds.Y), inverseViewMatrix);
-            var br = Vector2.Transform(new Vector2(Bounds.Width, Bounds.Height), inverseViewMatrix);
+            var tl = Vector2D.Transform(Vector2D.Zero, inverseViewMatrix);
+            var tr = Vector2D.Transform(new Vector2D(Bounds.X, 0), inverseViewMatrix);
+            var bl = Vector2D.Transform(new Vector2D(0, Bounds.Y), inverseViewMatrix);
+            var br = Vector2D.Transform(new Vector2D(Bounds.Width, Bounds.Height), inverseViewMatrix);
 
-            var min = new Vector2(
-                MathHelper.Min(tl.X, MathHelper.Min(tr.X, MathHelper.Min(bl.X, br.X))),
-                MathHelper.Min(tl.Y, MathHelper.Min(tr.Y, MathHelper.Min(bl.Y, br.Y))));
-            var max = new Vector2(
-                MathHelper.Max(tl.X, MathHelper.Max(tr.X, MathHelper.Max(bl.X, br.X))),
-                MathHelper.Max(tl.Y, MathHelper.Max(tr.Y, MathHelper.Max(bl.Y, br.Y))));
-            VisibleArea = new Rectangle((int)min.X, (int)min.Y, (int)(max.X - min.X), (int)(max.Y - min.Y));
+            var min = new Vector2D(
+                MathHelperD.Min(tl.X, MathHelperD.Min(tr.X, MathHelperD.Min(bl.X, br.X))),
+                MathHelperD.Min(tl.Y, MathHelperD.Min(tr.Y, MathHelperD.Min(bl.Y, br.Y))));
+            var max = new Vector2D(
+                MathHelperD.Max(tl.X, MathHelperD.Max(tr.X, MathHelperD.Max(bl.X, br.X))),
+                MathHelperD.Max(tl.Y, MathHelperD.Max(tr.Y, MathHelperD.Max(bl.Y, br.Y))));
+            VisibleArea = new RectangleD(min.X, min.Y, (max.X - min.X), (max.Y - min.Y));
         }
 
         private void UpdateMatrix()
         {
-            Transform = Matrix.CreateTranslation(new Vector3(-Position.X, -Position.Y, 0)) *
-                    Matrix.CreateScale(Zoom) *
-                    Matrix.CreateTranslation(new Vector3(Bounds.Width * 0.5f, Bounds.Height * 0.5f, 0));
+            Transform = MatrixD.CreateTranslation(new Vector3D(-Position.X, -Position.Y, 0)) *
+                    MatrixD.CreateScale(Zoom) *
+                    MatrixD.CreateTranslation(new Vector3D(Bounds.Width * 0.5f, Bounds.Height * 0.5f, 0));
             UpdateVisibleArea();
         }
 
-        public void MoveCamera(Vector2 movePosition)
+        public void MoveCamera(Vector2D movePosition)
         {
-            Vector2 newPosition = new Vector2((int)Math.Round(Position.X + movePosition.X), (int)Math.Round(Position.Y + movePosition.Y));
+            double posX = Position.X;
+            double posY = Position.Y;
+            double offX = movePosition.X;
+            double offY = movePosition.Y;
+            posX += Math.Ceiling(offX);
+            posY += Math.Ceiling(offY);
+            Vector2D newPosition = new Vector2D((float)Math.Round(posX), (float)Math.Round(posY));
             Position = newPosition;
             UpdateMatrix();
         }
@@ -75,7 +82,7 @@ namespace Cosmos.Engine
         {
             if (panning)
             {
-                Vector2 delta = panTarget - Position;
+                Vector2D delta = panTarget - Position;
                 delta /= 10;
                 if(Math.Abs(delta.X) < 10 && Math.Abs(delta.Y) < 10)
                 {
@@ -85,11 +92,11 @@ namespace Cosmos.Engine
             }
             if (following)
             {
-                PanCamera(new Vector2((float)followBody.posX, (float)followBody.posY));
+                PanCamera(new Vector2D((float)followBody.posX, (float)followBody.posY));
             }
         }
 
-        public void PanCamera(Vector2 target)
+        public void PanCamera(Vector2D target)
         {
             panTarget = target;
             panning = true;
@@ -101,7 +108,7 @@ namespace Cosmos.Engine
             {
                 followBody = body;
                 following = true;
-                PanCamera(new Vector2((float)followBody.posX, (float)followBody.posY));
+                PanCamera(new Vector2D((float)followBody.posX, (float)followBody.posY));
             }
             else
             {

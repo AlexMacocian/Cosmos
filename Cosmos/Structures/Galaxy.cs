@@ -1,4 +1,5 @@
-﻿using Microsoft.Xna.Framework;
+﻿using Cosmos.Engine;
+using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -22,7 +23,10 @@ namespace Cosmos.Structures
         private int width, height;
         private int minX, minY, maxX, maxY;
         private bool running = false, calculating = false;
-        volatile public List<CelestialBody> Bodies;
+        private volatile bool updating = false;
+        volatile private List<CelestialBody> Bodies;
+        public List<Star> Stars;
+        public List<Planet> Planets;
         public int Count;
         public Barnes_Hut.BHNode root;
         public int N;
@@ -65,6 +69,8 @@ namespace Cosmos.Structures
             this.height = height;
             root = new Barnes_Hut.BHNode(int.MaxValue, int.MaxValue);
             Bodies = new List<CelestialBody>(systems * maxBodsPerSys);
+            Planets = new List<Planet>();
+            Stars = new List<Star>();
             Count = N;
             double totalMass = 0;
             for (int i = 0; i < systems; i++)
@@ -78,24 +84,24 @@ namespace Cosmos.Structures
                 randomValue /= 100000000;
                 Star star = Star.GenerateRandomStar(i, randomValue, posX, posY);
                 Bodies.Add(star);
+                Stars.Add(star);
                 totalMass += star.mass;
                 double bodies = Rand.Next(minBodsPerSys, maxBodsPerSys);
                 for(int j = 0; j < bodies; j++)
                 {
-                    double rand = Rand.NextDouble();
-                    double mass2 = Constants.EARTH_SIZE * (0.2 + rand * 50);
-                    double d2 = mass2;
+                    double randomValue2 = Rand.Next(0, 100000000);
+                    randomValue2 /= 100000000;
                     double theta2 = Rand.NextDouble() * (Math.PI * 2);
                     double posX2, posY2;
-                    double radius2 = Rand.Next((int)star.size, (int)(star.size * 1.4));
+                    double radius2 = Rand.Next((int)(star.size * Constants.MIN_DISTANCE_RATIO), (int)(star.size * Constants.MAX_DISTANCE_RATIO));
                     posX2 = radius2 * Math.Cos(theta2);
                     posY2 = radius2 * Math.Sin(theta2);
                     posX2 += posX;
                     posY2 += posY;
-                    CelestialBody satellite = new CelestialBody(systems + (i * j), posX2, posY2, mass2, d2);
-                    Bodies.Add(satellite);
-                    GenerateOrbitalAcceleration(star, satellite);
-                    totalMass += mass2;
+                    Planet planet = Planet.GeneratePlanet(systems + (i * j), randomValue2, posX2, posY2, star, theta2);
+                    Planets.Add(planet);
+                    star.OrbitingPlanets.Add(planet);
+                    totalMass += planet.mass;
                 }
             }
             //Spawn black hole in middle
@@ -167,137 +173,9 @@ namespace Cosmos.Structures
             }
         }
 
-        public void UpdateGalaxy()
+        public CelestialBody GetBody(int index)
         {
-            foreach(CelestialBody body in Bodies)
-            {
-                foreach(CelestialBody otherBody in Bodies)
-                {
-                    if (body.id != otherBody.id)
-                    {
-                        if (!body.Collides(otherBody))
-                        {
-                            double fx = 0, fy = 0;
-                            otherBody.Attract(body, out fx, out fy);
-                            body.ApplyForce(fx, fy);
-                        }
-                    }
-                }
-                body.Update();
-                if (body.OutOfBounds && !body.MarkedToRemove)
-                {
-                    body.MarkToRemove();
-                }
-            }
-            iterations++;
-            //RECREATE LIST WITHOUT REMOVED OBJECTS
-            if (toRemove > 500)
-            {
-                List<CelestialBody> newList = new List<CelestialBody>(N - toRemove);
-                foreach (CelestialBody body in Bodies)
-                {
-                    if (!body.OutOfBounds)
-                    {
-                        newList.Add(body);
-                    }
-                }
-                N = newList.Count;
-                Bodies = newList;
-                toRemove = 0;
-            }
-        }
-
-        public void UpdateGalaxyThreaded()
-        {
-            if (!running)
-            {
-                running = true;
-                Thread t = new Thread(() => {
-                    while (true)
-                    {
-                        UpdateGalaxy();
-                    }
-                });
-                t.Start();
-            }
-        }
-
-        public void UpdateGalaxyOptimized()
-        {
-            //RECREATE LIST WITHOUT REMOVED OBJECTS
-            if (toRemove > 0)
-            {
-                List<CelestialBody> newList = new List<CelestialBody>(N - toRemove);
-                foreach (CelestialBody body in Bodies)
-                {
-                    if (!body.MarkedToRemove)
-                    {
-                        newList.Add(body);
-                    }
-                }
-                N = newList.Count;
-                Bodies = newList;
-                Interlocked.Exchange(ref toRemove, 0);
-            }
-
-            if (Galaxy.Instance.Iterations % 50 == 0 || toRemove > 500) //RECREATE TREE STRUCTURE
-            {
-                while (!Monitor.TryEnter(quadLock))
-                {
-
-                }
-                root.Reset();
-                Monitor.Exit(quadLock);
-                GC.Collect();
-
-            }
-            else
-            {
-                while (!Monitor.TryEnter(quadLock))
-                {
-
-                }
-                root.Clear();
-                Monitor.Exit(quadLock);
-            }
-
-
-
-            while (!Monitor.TryEnter(quadLock))
-            {
-
-            }
-            root.RootInsertBatchThreaded(Bodies);
-
-            Monitor.Exit(quadLock);
-
-            Parallel.ForEach(Bodies, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, (body) =>
-             {
-                 if (!body.MarkedToRemove)
-                 {
-                     root.CalculateForce(body);
-                 }
-             });
-
-            Parallel.ForEach(Bodies, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, (body) =>
-            {
-                if (body.MarkedToRemove)
-                {
-                    Interlocked.Increment(ref toRemove);//INCREMENT THE NUMBER OF NODES THAT WILL BE REMOVED
-                }
-                else
-                {
-                    body.Update();
-                    if (body.OutOfBounds)
-                        if (!body.MarkedToRemove)
-                        {
-                            body.MarkToRemove();
-                            Interlocked.Increment(ref toRemove);//INCREMENT THE NUMBER OF NODES THAT WILL BE REMOVED
-                        }
-                }
-            });
-            Interlocked.Increment(ref iterations);
-            requestUpdate = false;
+            return Bodies[index];
         }
 
         public void UpdateGalaxyOptimizedThreaded()
@@ -310,7 +188,7 @@ namespace Cosmos.Structures
                     root.InsertBatch(Bodies);
                     while (running)
                     {           
-                        if (requestUpdate)
+                        if (requestUpdate && !updating)
                         {
                             UpdateGalaxyOptimizedWithSkipIterations();
                         }
@@ -327,19 +205,32 @@ namespace Cosmos.Structures
 
         public void UpdateGalaxyOptimizedWithSkipIterations()
         {
+            updating = true;
             //RECREATE LIST WITHOUT REMOVED OBJECTS
             if (toRemove > 0)
             {
                 List<CelestialBody> newList = new List<CelestialBody>(N - toRemove);
-                foreach (CelestialBody body in Bodies)
+                List<Planet> newPlanetList = new List<Planet>();
+                List<Star> newStarList = new List<Star>();
+                foreach (Star body in Stars)
                 {
                     if (!body.MarkedToRemove)
                     {
                         newList.Add(body);
+                        newStarList.Add(body as Star);
+                    }
+                }
+                foreach (Planet body in Planets)
+                {
+                    if (!body.MarkedToRemove)
+                    {
+                        newPlanetList.Add(body as Planet);
                     }
                 }
                 N = newList.Count;
                 Bodies = newList;
+                Planets = newPlanetList;
+                Stars = newStarList;
                 Interlocked.Exchange(ref toRemove, 0);
             }
 
@@ -404,6 +295,17 @@ namespace Cosmos.Structures
                 else
                 {
                     body.Update();
+                    if(body == Camera.Instance.Following)
+                    {
+                        Camera.Instance.Follow(body);
+                    }
+                    if (body is Star)
+                    {
+                        foreach (Planet planet in (body as Star).OrbitingPlanets)
+                        {
+                            planet.Update();
+                        }
+                    }
                     if (body.OutOfBounds)
                         if (!body.MarkedToRemove)
                         {
@@ -414,6 +316,7 @@ namespace Cosmos.Structures
             });
             Interlocked.Increment(ref iterations);
             requestUpdate = false;
+            updating = false;
         }
 
         public void Stop()

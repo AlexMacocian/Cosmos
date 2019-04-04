@@ -25,6 +25,8 @@
     <ErrorReport>prompt</ErrorReport>
     <Prefer32Bit>false</Prefer32Bit>
     <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Optimize>false</Optimize>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|AnyCPU'">
     <OutputPath>bin\$(MonoGamePlatform)\$(Platform)\$(Configuration)\</OutputPath>
@@ -35,6 +37,7 @@
     <ErrorReport>prompt</ErrorReport>
     <Prefer32Bit>false</Prefer32Bit>
     <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <PropertyGroup>
     <ApplicationIcon>
@@ -49,7 +52,22 @@
     <Compile Include="Content\Circle.cs" />
     <Compile Include="Effects\BloomFilter.cs" />
     <Compile Include="Effects\QuadRenderer.cs" />
+    <Compile Include="Engine\BoundingBoxD.cs" />
+    <Compile Include="Engine\BoundingFrustumD.cs" />
+    <Compile Include="Engine\BoundingSphereD.cs" />
     <Compile Include="Engine\Camera.cs" />
+    <Compile Include="Engine\ColorMap.cs" />
+    <Compile Include="Engine\ContainmentType.cs" />
+    <Compile Include="Engine\MathHelperD.cs" />
+    <Compile Include="Engine\MatrixD.cs" />
+    <Compile Include="Engine\PlaneD.cs" />
+    <Compile Include="Engine\PlaneIntersectionTypeD.cs" />
+    <Compile Include="Engine\QuaternionD.cs" />
+    <Compile Include="Engine\RayD.cs" />
+    <Compile Include="Engine\RectangleD.cs" />
+    <Compile Include="Engine\Vector2D.cs" />
+    <Compile Include="Engine\Vector3D.cs" />
+    <Compile Include="Engine\Vector4D.cs" />
     <Compile Include="Game1.cs" />
     <Compile Include="Helper.cs" />
     <Compile Include="Program.cs" />
@@ -57,6 +75,7 @@
     <Compile Include="Structures\CelestialBody.cs" />
     <Compile Include="Structures\CelestialSystem.cs" />
     <Compile Include="Structures\Galaxy.cs" />
+    <Compile Include="Structures\Planet.cs" />
     <Compile Include="Structures\Star.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -128,6 +147,7 @@
   <ItemGroup>
     <Content Include="Content\Overlay1.xml" />
     <Content Include="Effects\bloom.fx" />
+    <Content Include="Effects\smoke.fx" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(MSBuildExtensionsPath)\MonoGame\v3.0\MonoGame.Content.Builder.targets" />

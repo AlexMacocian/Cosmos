@@ -116,7 +116,7 @@ namespace Cosmos.Structures
         {
             if (otherBody.mass < this.mass)
             {
-                double massToGive = otherBody.mass / 10;
+                double massToGive = otherBody.mass * Constants.COLLISION_ABSORPTION_MULTIPLIER;
                 otherBody.mass -= massToGive;
                 this.mass += massToGive;
                 if(otherBody.mass < 1)
@@ -129,7 +129,7 @@ namespace Cosmos.Structures
             }
             else
             {
-                double massToGive = this.mass / 5;
+                double massToGive = this.mass * Constants.COLLISION_ABSORPTION_MULTIPLIER;
                 this.mass -= massToGive;
                 otherBody.mass += massToGive;
                 if (this.mass < 1)
@@ -141,10 +141,8 @@ namespace Cosmos.Structures
             }
         }
 
-        public void Update()
+        public virtual void Update()
         {
-            aX *= Constants.TIME_CONSTANT;
-            aY *= Constants.TIME_CONSTANT;
             if (aX > Constants.MAX_ACCELERATION)
             {
                 aX = Constants.MAX_ACCELERATION;
@@ -163,8 +161,8 @@ namespace Cosmos.Structures
             }
             vX += aX;
             vY += aY;
-            posX += vX;
-            posY += vY;
+            posX += vX * Constants.TIME_CONSTANT;
+            posY += vY * Constants.TIME_CONSTANT;
             aX = 0;
             aY = 0;
             if(posX > int.MaxValue)//OVERFLOW RIGHT
