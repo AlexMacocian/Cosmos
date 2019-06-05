@@ -16,11 +16,11 @@ namespace Cosmos.Structures
         public static Galaxy Instance;
         public static Random Rand = new Random();
 
-        public object quadLock = new object();
+        public object quadLock = new object(), starListLock = new object(), planetListLock = new object();
         public double maxDepth = 0;
         private volatile int toRemove = 0;
         private volatile int iterations = 0;
-        private int width, height;
+        private double width, height;
         private int minX, minY, maxX, maxY;
         private bool running = false, calculating = false;
         private volatile bool updating = false;
@@ -39,7 +39,7 @@ namespace Cosmos.Structures
             }
         }
 
-        public int Width
+        public double Width
         {
             get
             {
@@ -47,7 +47,7 @@ namespace Cosmos.Structures
             }
         }
 
-        public int Height
+        public double Height
         {
             get
             {
@@ -63,11 +63,11 @@ namespace Cosmos.Structures
             }
         }
 
-        public Galaxy(int width, int height, int systems, int minBodsPerSys, int maxBodsPerSys)
+        public Galaxy(double width, double height, int systems, int minBodsPerSys, int maxBodsPerSys)
         {
             this.width = width;
             this.height = height;
-            root = new Barnes_Hut.BHNode(int.MaxValue, int.MaxValue);
+            root = new Barnes_Hut.BHNode(width, height);
             Bodies = new List<CelestialBody>(systems * maxBodsPerSys);
             Planets = new List<Planet>();
             Stars = new List<Star>();
@@ -77,7 +77,15 @@ namespace Cosmos.Structures
             {
                 double posX, posY;
                 double theta = Rand.NextDouble() * (Math.PI * 2);//GET VALUE BETWEEN 0 AND 2PI
-                double radius = Rand.Next(0, Math.Min(width, height) / 2);
+                double radius = Rand.NextDouble();
+                if (width > height)
+                {
+                    radius *= height / 2;
+                }
+                else
+                {
+                    radius *= width / 2;
+                }
                 posX = radius * Math.Cos(theta);
                 posY = radius * Math.Sin(theta);
                 double randomValue = Rand.Next(0, 100000000);
@@ -190,7 +198,7 @@ namespace Cosmos.Structures
                     {           
                         if (requestUpdate && !updating)
                         {
-                            UpdateGalaxyOptimizedWithSkipIterations();
+                            UpdateGalaxyOptimized();
                         }
                     }
                 });
@@ -201,6 +209,123 @@ namespace Cosmos.Structures
             {
                 requestUpdate = true;
             }
+        }
+
+        public void UpdateGalaxyOptimized()
+        {
+            updating = true;
+            //RECREATE LIST WITHOUT REMOVED OBJECTS
+            if (toRemove > 0)
+            {
+                List<CelestialBody> newList = new List<CelestialBody>(N - toRemove);
+                List<Planet> newPlanetList = new List<Planet>();
+                List<Star> newStarList = new List<Star>();
+                foreach (Star body in Stars)
+                {
+                    if (!body.MarkedToRemove)
+                    {
+                        newList.Add(body);
+                        newStarList.Add(body as Star);
+                    }
+                    else
+                    {
+                        body.OrbitingPlanets.Clear();
+                        body.containingNode.Reset();
+                        body.containingNode = null;
+                    }
+                }
+                foreach (Planet body in Planets)
+                {
+                    if (!body.MarkedToRemove)
+                    {
+                        newPlanetList.Add(body as Planet);
+                    }
+                    else
+                    {
+                        body.Star = null;
+                        body.containingNode.Reset();
+                        body.containingNode = null;
+                    }
+                }
+                N = newList.Count;
+                Bodies.Clear();
+                Bodies = newList;
+                while (!Monitor.TryEnter(planetListLock)) ;
+                Planets.Clear();
+                Planets = newPlanetList;
+                Monitor.Exit(planetListLock);
+                while (!Monitor.TryEnter(starListLock)) ;
+                Stars.Clear();
+                Stars = newStarList;
+                Monitor.Exit(starListLock);
+                Interlocked.Exchange(ref toRemove, 0);
+            }
+
+            //RECREATE TREE STRUCTURE
+            if(iterations % 200 == 0)
+            {
+                while (!Monitor.TryEnter(quadLock))
+                {
+
+                }
+                root.Reset();
+                Monitor.Exit(quadLock);
+                GC.Collect();
+                while (!Monitor.TryEnter(quadLock))
+                {
+
+                }
+                root.RootInsertBatchThreaded(Bodies);
+                Monitor.Exit(quadLock);
+            }
+
+            Parallel.ForEach(Bodies, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, (body) =>
+            {
+                if (body == null)
+                {
+                    return;
+                }
+                if (!body.MarkedToRemove)
+                {
+                    root.CalculateForce(body);
+                }
+            });
+
+            Parallel.ForEach(Bodies, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, (body) =>
+            {
+                if(body == null)
+                {
+                    return;
+                }
+                if (body.MarkedToRemove)
+                {
+                    Interlocked.Increment(ref toRemove);//INCREMENT THE NUMBER OF NODES THAT WILL BE REMOVED
+                }
+                else
+                {
+                    body.Update();
+                    if (body == Camera.Instance.Following)
+                    {
+                        Camera.Instance.Follow(body);
+                    }
+                    if (body is Star)
+                    {
+                        foreach (Planet planet in (body as Star).OrbitingPlanets)
+                        {
+                            planet.Update();
+                        }
+                    }
+                    if (body.OutOfBounds)
+                        if (!body.MarkedToRemove)
+                        {
+                            body.MarkToRemove();
+                            Interlocked.Increment(ref toRemove);//INCREMENT THE NUMBER OF NODES THAT WILL BE REMOVED
+                        }
+                }
+            });
+            Interlocked.Increment(ref iterations);
+            requestUpdate = false;
+            updating = false;
         }
 
         public void UpdateGalaxyOptimizedWithSkipIterations()
@@ -219,6 +344,12 @@ namespace Cosmos.Structures
                         newList.Add(body);
                         newStarList.Add(body as Star);
                     }
+                    else
+                    {
+                        body.OrbitingPlanets.Clear();
+                        body.containingNode.Reset();
+                        body.containingNode = null;
+                    }
                 }
                 foreach (Planet body in Planets)
                 {
@@ -226,11 +357,24 @@ namespace Cosmos.Structures
                     {
                         newPlanetList.Add(body as Planet);
                     }
+                    else
+                    {
+                        body.Star = null;
+                        body.containingNode.Reset();
+                        body.containingNode = null;
+                    }
                 }
                 N = newList.Count;
+                Bodies.Clear();
                 Bodies = newList;
+                while (!Monitor.TryEnter(planetListLock)) ;
+                Planets.Clear();
                 Planets = newPlanetList;
+                Monitor.Exit(planetListLock);
+                while (!Monitor.TryEnter(starListLock)) ;
+                Stars.Clear();
                 Stars = newStarList;
+                Monitor.Exit(starListLock);
                 Interlocked.Exchange(ref toRemove, 0);
             }
 

@@ -41,9 +41,7 @@ namespace Cosmos
         RenderTarget2D monoRenderTarget;
         RenderTarget2D preProcessRenderTarget;
         RenderTarget2D planetRenderTarget;
-        RenderTarget2D smokeRenderTarget;
         RenderTarget2D gridRenderTarget;
-        Effect smokeEffect;
 
         public Game1()
         {
@@ -68,13 +66,12 @@ namespace Cosmos
             graphics.PreferredBackBufferHeight = 768;
             graphics.PreferredBackBufferWidth = 1366;
             graphics.ApplyChanges();
-            Galaxy.Instance = new Galaxy(int.MaxValue, int.MaxValue, 5000, 0, 15);
+            Galaxy.Instance = new Galaxy((double)int.MaxValue * 1000, (double)int.MaxValue * 1000, 10000, 0, 15);
             // TODO: Add your initialization logic here
             MonoMenu.Engine.Monitor.Initialize();
             monoRenderTarget = new RenderTarget2D(GraphicsDevice, GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
             preProcessRenderTarget = new RenderTarget2D(GraphicsDevice, GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
             planetRenderTarget = new RenderTarget2D(GraphicsDevice, GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
-            smokeRenderTarget = new RenderTarget2D(GraphicsDevice, GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
             gridRenderTarget = new RenderTarget2D(GraphicsDevice, GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
             Menu = new MonoMenu.Engine.MonoMenu(graphics.GraphicsDevice, Content);
             Camera.Instance = new Camera(graphics.GraphicsDevice.Viewport);
@@ -85,9 +82,6 @@ namespace Cosmos
             MouseInput.ScrollDown += InputScrollDown;
             MouseInput.ScrollUp += InputScrollUp;
             MouseInput.Dragging += InputDragging;
-
-            BinaryReader Reader = new BinaryReader(new FileStream("../../../../Effects/smoke.mgfxo", FileMode.Open));
-            smokeEffect = new Effect(GraphicsDevice, Reader.ReadBytes((int)Reader.BaseStream.Length));
 
             base.Initialize();
         }
@@ -111,7 +105,6 @@ namespace Cosmos
             bloomFilter.BloomThreshold = 0.25f;
             bloomFilter.BloomStrengthMultiplier = 1.5f;
             // TODO: use this.Content to load your game content here
-            smokeEffect.Parameters["noiseTexture"].SetValue(Content.Load<Texture2D>("noise"));
         }
 
         /// <summary>
@@ -210,6 +203,7 @@ namespace Cosmos
                 {
                     Planet target = Galaxy.Instance.Planets[0];
                     bool found = false;
+                    while (!System.Threading.Monitor.TryEnter(Galaxy.Instance.planetListLock)) ;
                     foreach (Planet potential in Galaxy.Instance.Planets)
                     {
                         double targetDistance = Math.Pow(target.posX - Camera.Instance.Position.X, 2) + Math.Pow(target.posY - Camera.Instance.Position.Y, 2);
@@ -234,6 +228,7 @@ namespace Cosmos
                     {
                         Camera.Instance.Follow(target);
                     }
+                    System.Threading.Monitor.Exit(Galaxy.Instance.planetListLock);
                 }
             }
             // TODO: Add your update logic here
@@ -256,7 +251,7 @@ namespace Cosmos
             Vector2D mClkPos = new Vector2D(clickPos.X - GraphicsDevice.PresentationParameters.BackBufferWidth / 2, clickPos.Y - GraphicsDevice.PresentationParameters.BackBufferHeight / 2);
             mClkPos /= Camera.Instance.Zoom;
             mClkPos += Camera.Instance.Position;
-            string fps = "FPS: " + (int)MonoMenu.Engine.Monitor.FrameRate;
+            string fps = "FPS: " + (1 / gameTime.ElapsedGameTime.TotalSeconds);
             string bods = "Bodies: " + (Galaxy.Instance.Stars.Count + Galaxy.Instance.Planets.Count);
             string markedToRemove = "Marked to be removed: " + Galaxy.Instance.ToRemove;
             string iterations = "Iterations: " + Galaxy.Instance.Iterations;
@@ -302,54 +297,58 @@ namespace Cosmos
             spriteBatch.Begin(SpriteSortMode.Deferred, null, null, null, null, null, null);
 
             GraphicsDevice.Clear(Color.Black);
-            foreach (Star body in Galaxy.Instance.Stars)
+            if (Camera.Instance.Zoom * Constants.SUN_SIZE * 10 >= 1)
             {
-                RectangleD destRect = new RectangleD((float)(body.posX - (body.size / 2)), (float)(body.posY - (int)Math.Round(body.size / 2)), (float)body.size, (float)body.size);
-                if (Camera.Instance.VisibleArea.Contains(destRect) || Camera.Instance.VisibleArea.Intersects(destRect))
-                {            
-                    if (destRect.Contains(mClkPos) && leftMousePressed)
+                while (!System.Threading.Monitor.TryEnter(Galaxy.Instance.starListLock)) ;
+                foreach (Star body in Galaxy.Instance.Stars)
+                {
+                    RectangleD destRect = new RectangleD(body.posX - body.size / 2, body.posY - body.size / 2, body.size, body.size);
+                    if (Camera.Instance.VisibleArea.Contains(destRect) || Camera.Instance.VisibleArea.Intersects(destRect))
                     {
-                        found = true;
-                        Camera.Instance.Follow(body);
+                        if (destRect.Contains(mClkPos) && leftMousePressed)
+                        {
+                            found = true;
+                            Camera.Instance.Follow(body);
+                        }
+                        Color color = GetStarColor(body);
+                        double size = body.size * Camera.Instance.Zoom;
+                        double posX = (body.posX * Camera.Instance.Zoom) + transl.X - size / 2;
+                        double posY = (body.posY * Camera.Instance.Zoom) + transl.Y - size / 2;
+                        spriteBatch.Draw(circle.CircleText, new Rectangle((int)posX, (int)posY, (int)size, (int)size), color);
+                        //spriteBatch.Draw(circle.CircleText, new Microsoft.Xna.Framework.Rectangle((int)(body.Position.X + graphics.PreferredBackBufferWidth / 2 - 2.5), (int)(body.Position.Y + graphics.PreferredBackBufferHeight / 2 - 2.5), 5, 5), Color.Red);
                     }
-                    Color color = GetStarColor(body);
-                    double size = body.size * Camera.Instance.Zoom;
-                    double posX = (body.posX * Camera.Instance.Zoom) + transl.X - size / 2;
-                    double posY = (body.posY * Camera.Instance.Zoom) + transl.Y - size / 2;
-                    spriteBatch.Draw(circle.CircleText, new Rectangle((int)posX, (int)posY, (int)size, (int)size), color);
-                    //spriteBatch.Draw(circle.CircleText, new Microsoft.Xna.Framework.Rectangle((int)(body.Position.X + graphics.PreferredBackBufferWidth / 2 - 2.5), (int)(body.Position.Y + graphics.PreferredBackBufferHeight / 2 - 2.5), 5, 5), Color.Red);
                 }
+                System.Threading.Monitor.Exit(Galaxy.Instance.starListLock);
             }
             spriteBatch.End();
 
             Texture2D bloom = bloomFilter.Draw(preProcessRenderTarget, graphics.PreferredBackBufferWidth, graphics.PreferredBackBufferHeight);
-
-            smokeEffect.Parameters["time"].SetValue((float)gameTime.TotalGameTime.TotalSeconds);
 
             GraphicsDevice.SetRenderTarget(planetRenderTarget);
 
             spriteBatch.Begin(SpriteSortMode.Deferred, null, null, null, null, null, null);
             GraphicsDevice.Clear(Color.Black);
 
-            foreach (Planet body in Galaxy.Instance.Planets)
-            {
-                RectangleD destRect = new RectangleD((int)Math.Round(body.posX) - (int)Math.Round(body.size / 2), (int)Math.Round(body.posY) - (int)Math.Round(body.size / 2), (int)body.size, (int)body.size);
-                if (Camera.Instance.VisibleArea.Contains(destRect) || Camera.Instance.VisibleArea.Intersects(destRect))
+                while (!System.Threading.Monitor.TryEnter(Galaxy.Instance.planetListLock)) ;
+                foreach (Planet body in Galaxy.Instance.Planets)
                 {
-                    if (destRect.Contains(mClkPos) && leftMousePressed)
+                RectangleD destRect = new RectangleD(body.posX - body.size / 2, body.posY - body.size / 2, body.size, body.size);
+                if (Camera.Instance.VisibleArea.Contains(destRect) || Camera.Instance.VisibleArea.Intersects(destRect))
                     {
-                        found = true;
-                        Camera.Instance.Follow(body);
+                        if (destRect.Contains(mClkPos) && leftMousePressed)
+                        {
+                            found = true;
+                            Camera.Instance.Follow(body);
+                        }
+                        Color color = GetPlanetColor(body);
+                        double size = body.size * Camera.Instance.Zoom;
+                        double posX = (body.posX * Camera.Instance.Zoom) + transl.X - size / 2;
+                        double posY = (body.posY * Camera.Instance.Zoom) + transl.Y - size / 2;
+                        spriteBatch.Draw(circle.CircleText, new Rectangle((int)Math.Round(posX), (int)Math.Round(posY), (int)Math.Round(size), (int)Math.Round(size)), color);
+                        //spriteBatch.Draw(circle.CircleText, new Microsoft.Xna.Framework.Rectangle((int)(body.Position.X + graphics.PreferredBackBufferWidth / 2 - 2.5), (int)(body.Position.Y + graphics.PreferredBackBufferHeight / 2 - 2.5), 5, 5), Color.Red);
                     }
-                    Color color = GetPlanetColor(body);
-                    double size = body.size * Camera.Instance.Zoom;
-                    double posX = (body.posX * Camera.Instance.Zoom) + transl.X - size / 2;
-                    double posY = (body.posY * Camera.Instance.Zoom) + transl.Y - size / 2;
-                    spriteBatch.Draw(circle.CircleText, new Rectangle((int)Math.Round(posX), (int)Math.Round(posY), (int)Math.Round(size), (int)Math.Round(size)), color);
-                    //spriteBatch.Draw(circle.CircleText, new Microsoft.Xna.Framework.Rectangle((int)(body.Position.X + graphics.PreferredBackBufferWidth / 2 - 2.5), (int)(body.Position.Y + graphics.PreferredBackBufferHeight / 2 - 2.5), 5, 5), Color.Red);
                 }
-            }
-
+                System.Threading.Monitor.Exit(Galaxy.Instance.planetListLock);
             if (leftMousePressed && !found)
             {
                 Camera.Instance.Follow(null);
@@ -365,18 +364,12 @@ namespace Cosmos
 
                 }
                 GraphicsDevice.SetRenderTarget(gridRenderTarget);
-                spriteBatch.Begin(SpriteSortMode.Immediate, null, null, null, null, null, cameraTransf.XNAMatrix);
-                Galaxy.Instance.root.DrawOutline(spriteBatch, pixel, graphics.PreferredBackBufferWidth, graphics.PreferredBackBufferHeight, Camera.Instance.VisibleArea);
+                spriteBatch.Begin(SpriteSortMode.Immediate, null, null, null, null, null, null);
+                Galaxy.Instance.root.DrawOutline(spriteBatch, pixel, graphics.PreferredBackBufferWidth, graphics.PreferredBackBufferHeight, Camera.Instance.VisibleArea, transl);
                 System.Threading.Monitor.Exit(Galaxy.Instance.quadLock);
                 spriteBatch.End();
             }
             #endregion
-
-            GraphicsDevice.SetRenderTarget(smokeRenderTarget);
-            GraphicsDevice.Clear(Color.Black);
-            spriteBatch.Begin(SpriteSortMode.Deferred, null, null, null, null, smokeEffect, null);
-            spriteBatch.Draw(circle.CircleText, new Vector2(0, 0), Color.White);
-            spriteBatch.End();
 
 
             GraphicsDevice.SetRenderTarget(null);
@@ -388,7 +381,6 @@ namespace Cosmos
             {
                 spriteBatch.Draw(gridRenderTarget, new Vector2(0, 0), Color.White);
             }
-            spriteBatch.Draw(smokeRenderTarget, new Vector2(0, 0), Color.FromNonPremultiplied(255, 255, 255, 100));
             spriteBatch.Draw(pixel, new Rectangle(new Point(MouseInput.MousePosition.X - 2, MouseInput.MousePosition.Y - 2), new Point(4, 4)), Color.Red);
             spriteBatch.Draw(monoRenderTarget, new Rectangle(0, 0, monoRenderTarget.Width, monoRenderTarget.Height), Color.White);
             spriteBatch.End();
@@ -441,7 +433,7 @@ namespace Cosmos
                 case Planet.Habitability.P:
                     return Color.CornflowerBlue;
                 case Planet.Habitability.M:
-                    return Color.LightSeaGreen;
+                    return Color.Green;
                 case Planet.Habitability.T:
                     return Color.Orange;
                 case Planet.Habitability.hT:

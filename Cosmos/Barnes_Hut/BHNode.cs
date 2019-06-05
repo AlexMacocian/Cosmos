@@ -27,6 +27,15 @@ namespace Cosmos.Barnes_Hut
         private double cx, cy; //centre of node
         private double cmx, cmy; //centre of mass 
         private double width, height, depth = 0, totalMass;
+        private enum Location
+        {
+            TopLeft,
+            TopRight,
+            BotLeft,
+            BotRight,
+            Root
+        }
+        private Location nodeLocation = Location.Root;
         #endregion
         #region Public fields
         public object treelock = new object();
@@ -108,7 +117,24 @@ namespace Cosmos.Barnes_Hut
             {
                 return childBody;
             }
+            set
+            {
+                childBody = value;
+                if(childBody != null)
+                {
+                    childBody.containingNode = this;
+                }
+            }
         }
+        public BHNode Parent
+        {
+            get
+            {
+                return parent;
+            }
+        }
+
+        private Location NodeLocation { get => nodeLocation; set => nodeLocation = value; }
         #endregion
         #region Private methods
         /// <summary>
@@ -117,7 +143,7 @@ namespace Cosmos.Barnes_Hut
         /// <param name="width"></param>
         /// <param name="height"></param>
         /// <param name="center"></param>
-        private BHNode(double width, double height, double cx, double cy, double depth, BHNode parent)
+        private BHNode(double width, double height, double cx, double cy, double depth, BHNode parent, Location location)
         {
             this.width = width;
             this.height = height;
@@ -125,6 +151,7 @@ namespace Cosmos.Barnes_Hut
             this.cy = cy;
             this.depth = depth;
             this.parent = parent;
+            this.nodeLocation = location;
         }
         /// <summary>
         /// Method determines to which quadrant to put the body
@@ -136,10 +163,14 @@ namespace Cosmos.Barnes_Hut
             {
                 if (body.posY < cy) //Top
                 {
+                    if (topLeft == null)
+                        topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this, Location.TopLeft);
                     topLeft.Insert(body);
                 }
                 else //Bot
                 {
+                    if (botLeft == null)
+                        botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this, Location.BotLeft);
                     botLeft.Insert(body);
                 }
             }
@@ -147,10 +178,14 @@ namespace Cosmos.Barnes_Hut
             {
                 if (body.posY < cy) //Top
                 {
+                    if (topRight == null)
+                        topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this, Location.TopRight);
                     topRight.Insert(body);
                 }
                 else //Bot
                 {
+                    if (botRight == null)
+                        botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this, Location.BotRight);
                     botRight.Insert(body);
                 }
             }
@@ -184,6 +219,32 @@ namespace Cosmos.Barnes_Hut
                 if (parent != null)
                 {
                     parent.FindContainingNode(body);
+                    if(!hasChildBody && !hasChildrenNodes)
+                    {
+                        switch (nodeLocation)
+                        {
+                            case Location.BotLeft:
+                                this.parent.botLeft = null;
+                                break;
+                            case Location.BotRight:
+                                this.parent.botRight = null;
+                                break;
+                            case Location.TopLeft:
+                                this.parent.topLeft = null;
+                                break;
+                            case Location.TopRight:
+                                this.parent.topRight = null;
+                                break;
+                        }
+                        if( this.parent.botLeft == null && 
+                            this.parent.botRight ==  null &&
+                            this.parent.topLeft == null &&
+                            this.parent.topRight == null
+                            )
+                        {
+                            this.parent.hasChildrenNodes = false;
+                        }
+                    }
                 }
             }
         }
@@ -215,12 +276,11 @@ namespace Cosmos.Barnes_Hut
             {
                 if(!hasChildBody)
                 {
-                    childBody = body;
+                    ChildBody = body;
                     hasChildBody = true;
-                    cmx = childBody.posX;
-                    cmy = childBody.posY;
-                    totalMass = childBody.mass;
-                    childBody.containingNode = this;
+                    cmx = ChildBody.posX;
+                    cmy = ChildBody.posY;
+                    totalMass = ChildBody.mass;
                 }
                 return;
             }
@@ -235,17 +295,17 @@ namespace Cosmos.Barnes_Hut
                 lock (treelock)
                 {
                     if (topLeft == null)
-                        topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this);
+                        topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this, Location.TopLeft);
                     if (topRight == null)
-                        topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this);
+                        topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this, Location.TopRight);
                     if (botLeft == null)
-                        botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this);
+                        botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this, Location.BotLeft);
                     if (botRight == null)
-                        botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this);
+                        botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this, Location.BotRight);
                     hasChildrenNodes = true;
                 }
                 //Send child body inward
-                SendInward(childBody);
+                SendInward(ChildBody);
 
                 hasChildBody = false;
 
@@ -254,10 +314,12 @@ namespace Cosmos.Barnes_Hut
             }
             else //Node has no body and no children, set body
             {
-                childBody = body;
+                ChildBody = body;
                 hasChildBody = true;
-                childBody.containingNode = this;
             }
+
+            CleanUp();
+
             double tx = body.posX;
             double ty = body.posY;
 
@@ -286,12 +348,11 @@ namespace Cosmos.Barnes_Hut
             {
                 if (!hasChildBody && bodies.Count > 0)
                 {
-                    childBody = bodies[0];
-                    cmx = childBody.posX;
-                    cmy = childBody.posY;
-                    totalMass = childBody.mass;
+                    ChildBody = bodies[0];
+                    cmx = ChildBody.posX;
+                    cmy = ChildBody.posY;
+                    totalMass = ChildBody.mass;
                     hasChildBody = true;
-                    childBody.containingNode = this;
                 }
                 return;
             }
@@ -301,18 +362,18 @@ namespace Cosmos.Barnes_Hut
                 if (!hasChildrenNodes)
                 {
                     if (topLeft == null)
-                        topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this);
+                        topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this, Location.TopLeft);
                     if (topRight == null)
-                        topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this);
+                        topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this, Location.TopRight);
                     if (botLeft == null)
-                        botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this);
+                        botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this, Location.BotLeft);
                     if (botRight == null)
-                        botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this);
+                        botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this, Location.BotRight);
                 }
                 if (hasChildBody)
                 {
                     //Send the body inward
-                    SendInward(childBody);
+                    SendInward(ChildBody);
                     hasChildBody = false;
                 }
 
@@ -387,28 +448,28 @@ namespace Cosmos.Barnes_Hut
                     if (!hasChildrenNodes)
                     {
                         if (topLeft == null)
-                            topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this);
+                            topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this, Location.TopLeft);
                         if (topRight == null)
-                            topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this);
+                            topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this, Location.TopRight);
                         if (botLeft == null)
-                            botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this);
+                            botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this, Location.BotLeft);
                         if (botRight == null)
-                            botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this);
+                            botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this, Location.BotRight);
                     }
-                    SendInward(childBody);
+                    SendInward(ChildBody);
                     SendInward(bodies[0]);
                     hasChildrenNodes = true;
                 }
                 else //No current body, set childbody as body
                 {
-                    childBody = bodies[0];
+                    ChildBody = bodies[0];
                     hasChildBody = true;
-                    childBody.containingNode = this;
-                    cmx = childBody.posX;
-                    cmy = childBody.posY;
-                    totalMass = childBody.mass;
+                    cmx = ChildBody.posX;
+                    cmy = ChildBody.posY;
+                    totalMass = ChildBody.mass;
                 }
             }
+            CleanUp();
         }
 
         /// <summary>
@@ -421,12 +482,11 @@ namespace Cosmos.Barnes_Hut
             {
                 if (!hasChildBody && bodies.Count > 0)
                 {
-                    childBody = bodies[0];
-                    cmx = childBody.posX;
-                    cmy = childBody.posY;
-                    totalMass = childBody.mass;
+                    ChildBody = bodies[0];
+                    cmx = ChildBody.posX;
+                    cmy = ChildBody.posY;
+                    totalMass = ChildBody.mass;
                     hasChildBody = true;
-                    childBody.containingNode = this;
                 }
                 return;
             }
@@ -436,18 +496,18 @@ namespace Cosmos.Barnes_Hut
                 if (!hasChildrenNodes)
                 {
                     if (topLeft == null)
-                        topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this);
+                        topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this, Location.TopLeft);
                     if (topRight == null)
-                        topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this);
+                        topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this, Location.TopRight);
                     if (botLeft == null)
-                        botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this);
+                        botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this, Location.BotLeft);
                     if (botRight == null)
-                        botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this);
+                        botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this, Location.BotRight);
                 }
                 if (hasChildBody)
                 {
                     //Send the body inward
-                    SendInward(childBody);
+                    SendInward(ChildBody);
                     hasChildBody = false;
                 }
 
@@ -531,50 +591,73 @@ namespace Cosmos.Barnes_Hut
                     if (!hasChildrenNodes)
                     {
                         if (topLeft == null)
-                            topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this);
+                            topLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy - height / 4, depth + 1, this, Location.TopLeft);
                         if (topRight == null)
-                            topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this);
+                            topRight = new BHNode(width / 2, height / 2, cx + width / 4, cy - height / 4, depth + 1, this, Location.TopRight);
                         if (botLeft == null)
-                            botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this);
+                            botLeft = new BHNode(width / 2, height / 2, cx - width / 4, cy + height / 4, depth + 1, this, Location.BotLeft);
                         if (botRight == null)
-                            botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this);
+                            botRight = new BHNode(width / 2, height / 2, cx + width / 4, cy + height / 4, depth + 1, this, Location.BotRight);
                     }
-                    SendInward(childBody);
+                    SendInward(ChildBody);
                     SendInward(bodies[0]);
                     hasChildrenNodes = true;
                 }
                 else //No current body, set childbody as body
                 {
-                    childBody = bodies[0];
+                    ChildBody = bodies[0];
                     hasChildBody = true;
-                    childBody.containingNode = this;
-                    cmx = childBody.posX;
-                    cmy = childBody.posY;
-                    totalMass = childBody.mass;
+                    cmx = ChildBody.posX;
+                    cmy = ChildBody.posY;
+                    totalMass = ChildBody.mass;
                 }
             }
+            CleanUp();
         }
 
-        public void DrawOutline(SpriteBatch spritebatch, Texture2D pixeltext, int screenwidth, int screenheight, RectangleD screenBounds)
+        public void DrawOutline(SpriteBatch spritebatch, Texture2D pixeltext, int screenwidth, int screenheight, RectangleD screenBounds, Vector3D translate)
         {
-            Rectangle boundrect = new Rectangle((int)(cx - width / 2), (int)(cy - height / 2), (int)(width), (int)(height));
+            RectangleD boundrect = new RectangleD((cx - width / 2), (cy - height / 2), (width), (height));
             if (!screenBounds.Intersects(boundrect))
             {
                 return;
             }
-            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Left, boundrect.Top, boundrect.Width, (int)(1 / Camera.Instance.Zoom)), Microsoft.Xna.Framework.Color.Green);
-            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Left, boundrect.Bottom, boundrect.Width, (int)(1 / Camera.Instance.Zoom)), Microsoft.Xna.Framework.Color.Green);
-            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Left, boundrect.Top, (int)(1 / Camera.Instance.Zoom), boundrect.Height), Microsoft.Xna.Framework.Color.Green);
-            spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle(boundrect.Right, boundrect.Top, (int)(1 / Camera.Instance.Zoom), boundrect.Height), Microsoft.Xna.Framework.Color.Green);
-
+            {
+                double size = boundrect.Width * Camera.Instance.Zoom;
+                double posX = (boundrect.X * Camera.Instance.Zoom) + translate.X;
+                double posY = (boundrect.Y * Camera.Instance.Zoom) + translate.Y;
+                spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle((int)posX, (int)posY, (int)size, 1), Microsoft.Xna.Framework.Color.Green);
+            }
+            {
+                double size = boundrect.Width * Camera.Instance.Zoom;
+                double posX = (boundrect.X * Camera.Instance.Zoom) + translate.X;
+                double posY = ((boundrect.Y + boundrect.Height) * Camera.Instance.Zoom) + translate.Y;
+                spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle((int)posX, (int)posY, (int)size, 1), Microsoft.Xna.Framework.Color.Green);
+            }
+            {
+                double size = boundrect.Height * Camera.Instance.Zoom;
+                double posX = (boundrect.X * Camera.Instance.Zoom) + translate.X;
+                double posY = (boundrect.Y * Camera.Instance.Zoom) + translate.Y;
+                spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle((int)posX, (int)posY, 1, (int)size), Microsoft.Xna.Framework.Color.Green);
+            }
+            {
+                double size = boundrect.Height * Camera.Instance.Zoom;
+                double posX = ((boundrect.X + boundrect.Width) * Camera.Instance.Zoom) + translate.X;
+                double posY = (boundrect.Y * Camera.Instance.Zoom) + translate.Y;
+                spritebatch.Draw(pixeltext, new Microsoft.Xna.Framework.Rectangle((int)posX, (int)posY, 1, (int)size), Microsoft.Xna.Framework.Color.Green);
+            }
             lock (treelock)
             {
                 if (hasChildrenNodes)
                 {
-                    topLeft.DrawOutline(spritebatch, pixeltext, screenwidth, screenheight, screenBounds);
-                    topRight.DrawOutline(spritebatch, pixeltext, screenwidth, screenheight, screenBounds);
-                    botLeft.DrawOutline(spritebatch, pixeltext, screenwidth, screenheight, screenBounds);
-                    botRight.DrawOutline(spritebatch, pixeltext, screenwidth, screenheight, screenBounds);
+                    if(topLeft != null)
+                        topLeft.DrawOutline(spritebatch, pixeltext, screenwidth, screenheight, screenBounds, translate);
+                    if(topRight != null)
+                        topRight.DrawOutline(spritebatch, pixeltext, screenwidth, screenheight, screenBounds, translate);
+                    if(botLeft != null)
+                        botLeft.DrawOutline(spritebatch, pixeltext, screenwidth, screenheight, screenBounds, translate);
+                    if(botRight != null)
+                        botRight.DrawOutline(spritebatch, pixeltext, screenwidth, screenheight, screenBounds, translate);
                 }
             }
 
@@ -585,16 +668,21 @@ namespace Cosmos.Barnes_Hut
         {
             if (hasChildrenNodes)
             {
-                topLeft.Clear();
-                topRight.Clear();
-                botLeft.Clear();
-                botRight.Clear();
+                if(topLeft != null)
+                    topLeft.Reset();
+                if(topRight != null)
+                    topRight.Reset();
+                if(botLeft != null)
+                    botLeft.Reset();
+                if(botRight != null)
+                    botRight.Reset();
                 hasChildrenNodes = false;
                 lock(treelock){
                     topLeft = topRight = botLeft = botRight = null;
                 }
             }
             hasChildBody = false;
+            childBody = null;
             cmx = 0;
             cmy = 0;
             totalMass = 0;
@@ -604,13 +692,18 @@ namespace Cosmos.Barnes_Hut
         {
             if (hasChildrenNodes)
             {
-                topLeft.Clear();
-                topRight.Clear();
-                botLeft.Clear();
-                botRight.Clear();
+                if(topRight != null)
+                    topLeft.Clear();
+                if(topRight != null)
+                    topRight.Clear();
+                if(botLeft != null)
+                    botLeft.Clear();
+                if(botRight != null)
+                    botRight.Clear();
                 hasChildrenNodes = false;
             }
             hasChildBody = false;
+            childBody = null;
             cmx = 0;
             cmy = 0;
             totalMass = 0;
@@ -624,19 +717,19 @@ namespace Cosmos.Barnes_Hut
             }
             if(hasChildBody)
             {
-                if (childBody.id != body.id)
+                if (ChildBody.id != body.id)
                 {
-                    if (!body.Collides(childBody))
+                    if (!body.Collides(ChildBody))
                     {
                         double fx = 0, fy = 0;
-                        childBody.Attract(body, out fx, out fy);
+                        ChildBody.Attract(body, out fx, out fy);
                         body.ApplyForce(fx * Constants.ITERATIONS_PER_CALCULATION, fy * Constants.ITERATIONS_PER_CALCULATION);
                     }
                     else
                     {
-                        if (body.Collides(childBody))
+                        if (body.Collides(ChildBody))
                         {
-                            body.ResolveCollisionWithAbsorption(childBody);
+                            body.ResolveCollisionWithAbsorption(ChildBody);
                         }
                     }
                 }
@@ -663,10 +756,14 @@ namespace Cosmos.Barnes_Hut
                     }
                     else
                     {
-                        topLeft.CalculateForce(body);
-                        topRight.CalculateForce(body);
-                        botLeft.CalculateForce(body);
-                        botRight.CalculateForce(body);
+                        if(topLeft != null)
+                            topLeft.CalculateForce(body);
+                        if(topRight != null)
+                            topRight.CalculateForce(body);
+                        if(botLeft != null)
+                            botLeft.CalculateForce(body);
+                        if(botRight != null)
+                            botRight.CalculateForce(body);
                     }
                 }
             }
@@ -685,7 +782,7 @@ namespace Cosmos.Barnes_Hut
             if (hasChildBody)
             {
                 hasChildBody = false;
-                FindContainingNode(childBody);
+                FindContainingNode(ChildBody);
             }
         }
 
@@ -699,6 +796,27 @@ namespace Cosmos.Barnes_Hut
                 return false;
             }
             return true;
+        }
+
+        private void CleanUp()
+        {
+            //Clean up after insertion
+            if (topLeft != null && !topLeft.HasChildBody && !topLeft.HasChildrenNodes)
+            {
+                topLeft = null;
+            }
+            if (topRight != null && !topRight.HasChildBody && !topRight.HasChildrenNodes)
+            {
+                topRight = null;
+            }
+            if (botLeft != null && !botLeft.HasChildBody && !botLeft.HasChildrenNodes)
+            {
+                botLeft = null;
+            }
+            if (botRight != null && !botRight.HasChildBody && !botRight.HasChildrenNodes)
+            {
+                botRight = null;
+            }
         }
         #endregion
     }

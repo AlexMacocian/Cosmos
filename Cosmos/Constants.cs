@@ -15,7 +15,7 @@ namespace Cosmos
         public static int BH_MAX_DEPTH = 100;
         public static double Theta = 0.95;
         public static double ZOOM_LEVEL = 1;
-        public static double EARTH_SIZE = 1000;
+        public static double EARTH_SIZE = 50000;
         public static double EARTH_MASS = 1;
         public static double SUN_MASS = 10e5;
         public static double SUN_SIZE = 10e2 * EARTH_SIZE;

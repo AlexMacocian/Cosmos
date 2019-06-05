@@ -165,24 +165,31 @@ namespace Cosmos.Structures
             posY += vY * Constants.TIME_CONSTANT;
             aX = 0;
             aY = 0;
-            if(posX > int.MaxValue)//OVERFLOW RIGHT
+            if(posX > Galaxy.Instance.Width / 2)//OVERFLOW RIGHT
             {
                 outOfBounds = true;
             }
-            else if(posX < int.MinValue)//OVERFLOW LEFT
+            else if(posX < -Galaxy.Instance.Width / 2)//OVERFLOW LEFT
             {
                 outOfBounds = true;
             }
 
-            if(posY > int.MaxValue)//OVERFLOW BOT
+            if(posY > Galaxy.Instance.Height / 2)//OVERFLOW BOT
             {
                 outOfBounds = true;
             }
-            else if(posY < int.MinValue)//OVERFLOW TOP
+            else if(posY < -Galaxy.Instance.Height / 2)//OVERFLOW TOP
             {
                 outOfBounds = true;
             }
             size = mass * sizepercmass;
+            if (containingNode != null)
+            {
+                if (!containingNode.NodeFits(this) && !outOfBounds)
+                {
+                    containingNode.ReinsertChild();
+                }
+            }
         }
 
         /// <summary>
