@@ -19,7 +19,9 @@ namespace Cosmos.WorldGen.Map
             Desert,
             Tundra,
             MountainPeak,
-            FrozenOcean
+            FrozenOcean,
+            Forest,
+            Hills
         }
         /// <summary>
         /// Map of colors representing the region.

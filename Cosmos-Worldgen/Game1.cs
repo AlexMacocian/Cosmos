@@ -53,7 +53,7 @@ namespace Cosmos.WorldGen
         protected override void LoadContent()
         {
             // Create a new SpriteBatch, which can be used to draw textures.
-            hexagonTilemap = new HexagonTilemap(new Vector2(0, 0), 200, 200, 50, 1337, 0.5f, 0.5f, 0.3f, 0.8f);
+            hexagonTilemap = new HexagonTilemap(new Vector2(0, 0), 1000, 1000, 50, 1337, 0.5f, 0.2f, 0.4f, 0.5f, 13f);
             spriteBatch = new SpriteBatch(GraphicsDevice);
             prevMouseState = Mouse.GetState();
             camera = new Camera2D(GraphicsDevice);
@@ -98,7 +98,7 @@ namespace Cosmos.WorldGen
             prevMouseState = Mouse.GetState();
             camera.Move(new Vector2(-dx / camera.Zoom, -dy / camera.Zoom));
 
-            hexagonTilemap.Update(gameTime);
+            hexagonTilemap.Update(gameTime, camera.BoundingRectangle, camera);
 
             if (Keyboard.GetState().IsKeyDown(Keys.Up))
             {
@@ -116,7 +116,7 @@ namespace Cosmos.WorldGen
             {
                 hexagonTilemap.WindDirection += new Vector2(-0.01f, 0);
             }
-            if (Keyboard.GetState().IsKeyDown(Keys.I))
+            if (Keyboard.GetState().IsKeyDown(Keys.O))
             {
                 hexagonTilemap.Seed = new Random().Next();
                 hexagonTilemap.GenerateMap();
@@ -125,22 +125,22 @@ namespace Cosmos.WorldGen
             {
                 if (Keyboard.GetState().IsKeyDown(Keys.Q))
                 {
-                    hexagonTilemap.AverageElevation += 0.05f;
+                    hexagonTilemap.AverageElevation += 0.005f;
                     hexagonTilemap.GenerateMap();
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.W))
                 {
-                    hexagonTilemap.AverageTemperature += 0.05f;
+                    hexagonTilemap.AverageTemperature += 0.005f;
                     hexagonTilemap.GenerateMap();
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.E))
                 {
-                    hexagonTilemap.ElevationVariation += 0.05f;
+                    hexagonTilemap.ElevationVariation += 0.005f;
                     hexagonTilemap.GenerateMap();
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.R))
                 {
-                    hexagonTilemap.TemperatureVariation += 0.05f;
+                    hexagonTilemap.TemperatureVariation += 0.005f;
                     hexagonTilemap.GenerateMap();
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.T))
@@ -150,35 +150,38 @@ namespace Cosmos.WorldGen
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.Y))
                 {
-                    hexagonTilemap.AtmospherePresence += 0.05f;
-                    hexagonTilemap.GenerateMap();
+                    hexagonTilemap.AtmospherePresence += 0.005f;
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.U))
                 {
                     hexagonTilemap.AtmosphereDensity += 0.1f;
                     hexagonTilemap.GenerateMap();
                 }
+                if (Keyboard.GetState().IsKeyDown(Keys.I))
+                {
+                    hexagonTilemap.RotatingSpeed += 0.1f;
+                }
             }
             else if (Keyboard.GetState().IsKeyDown(Keys.OemMinus))
             {
                 if (Keyboard.GetState().IsKeyDown(Keys.Q))
                 {
-                    hexagonTilemap.AverageElevation -= 0.05f;
+                    hexagonTilemap.AverageElevation -= 0.005f;
                     hexagonTilemap.GenerateMap();
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.W))
                 {
-                    hexagonTilemap.AverageTemperature -= 0.05f;
+                    hexagonTilemap.AverageTemperature -= 0.005f;
                     hexagonTilemap.GenerateMap();
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.E))
                 {
-                    hexagonTilemap.ElevationVariation -= 0.05f;
+                    hexagonTilemap.ElevationVariation -= 0.005f;
                     hexagonTilemap.GenerateMap();
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.R))
                 {
-                    hexagonTilemap.TemperatureVariation -= 0.05f;
+                    hexagonTilemap.TemperatureVariation -= 0.005f;
                     hexagonTilemap.GenerateMap();
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.T))
@@ -188,13 +191,16 @@ namespace Cosmos.WorldGen
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.Y))
                 {
-                    hexagonTilemap.AtmospherePresence -= 0.05f;
-                    hexagonTilemap.GenerateMap();
+                    hexagonTilemap.AtmospherePresence -= 0.005f;
                 }
                 if (Keyboard.GetState().IsKeyDown(Keys.U))
                 {
                     hexagonTilemap.AtmosphereDensity -= 0.1f;
                     hexagonTilemap.GenerateMap();
+                }
+                if (Keyboard.GetState().IsKeyDown(Keys.I))
+                {
+                    hexagonTilemap.RotatingSpeed -= 0.1f;
                 }
             }
 
@@ -208,6 +214,8 @@ namespace Cosmos.WorldGen
         protected override void Draw(GameTime gameTime)
         {
             GraphicsDevice.Clear(Color.Black);
+
+            hexagonTilemap.GenerateAtmosphere(camera.BoundingRectangle, camera);
 
             if (hexagonTexture == null)
             {
@@ -225,39 +233,22 @@ namespace Cosmos.WorldGen
                 spriteBatch.End();
                 GraphicsDevice.SetRenderTarget(null);
             }
+            spriteBatch.Begin(SpriteSortMode.Immediate, BlendState.Additive, null, null, null, null, camera.GetViewMatrix());
+            hexagonTilemap.DrawMap(spriteBatch, camera, hexagonTexture);
+            spriteBatch.End();
             spriteBatch.Begin(SpriteSortMode.Texture, BlendState.Additive, null, null, null, null, camera.GetViewMatrix());
-            Vector2 startPos, endPos;
-            hexagonTilemap.GetDrawingCoordinates(camera.BoundingRectangle, out startPos, out endPos);
-            for (int i = (int)startPos.X; i < (int)endPos.X; i++)
-            {
-                for (int j = (int)Math.Floor(startPos.Y); j < (int)Math.Ceiling(endPos.Y); j++)
-                {
-                    Vector2 position = new Vector2(hexagonTilemap.Tiles[i, j].Hexagon.Position.X - hexagonTilemap.TileSize,
-                        hexagonTilemap.Tiles[i, j].Hexagon.Position.Y - hexagonTilemap.TileSize);
-                    spriteBatch.Draw(hexagonTexture, position, hexagonTilemap.Tiles[i, j].Color);
-                }
-            }
-            for (int i = (int)startPos.X; i < (int)endPos.X; i++)
-            {
-                for (int j = (int)Math.Floor(startPos.Y); j < (int)Math.Ceiling(endPos.Y); j++)
-                {
-                    Vector2 position = new Vector2(hexagonTilemap.AtmosphericTiles[i, j].Hexagon.Position.X - hexagonTilemap.TileSize,
-                        hexagonTilemap.Tiles[i, j].Hexagon.Position.Y - hexagonTilemap.TileSize);
-                    spriteBatch.Draw(hexagonTexture, position, hexagonTilemap.AtmosphericTiles[i, j].Color);
-                }
-            }
             if (Mouse.GetState().LeftButton == ButtonState.Pressed)
             {
                 Vector2 mousePosition = new Vector2(Mouse.GetState().Position.X, Mouse.GetState().Position.Y);
                 mousePosition = camera.ScreenToWorld(mousePosition.X, mousePosition.Y);
                 HexagonTile tile = hexagonTilemap.GetTileAtCoordinates(mousePosition);
-                Vector2 position = new Vector2(tile.Hexagon.Position.X - hexagonTilemap.TileSize,
-                        tile.Hexagon.Position.Y - hexagonTilemap.TileSize);
+                Vector2 position = new Vector2(tile.Hexagon.Position.X,
+                        tile.Hexagon.Position.Y);
                 spriteBatch.Draw(hexagonBorderTexture, position, Color.Red);
                 foreach(HexagonTile nt in hexagonTilemap.GetAllNeighbors(tile))
                 {
-                    Vector2 pos = new Vector2(nt.Hexagon.Position.X - hexagonTilemap.TileSize,
-                            nt.Hexagon.Position.Y - hexagonTilemap.TileSize);
+                    Vector2 pos = new Vector2(nt.Hexagon.Position.X,
+                            nt.Hexagon.Position.Y);
                     spriteBatch.Draw(hexagonBorderTexture, pos, Color.Red);
                 }
             }

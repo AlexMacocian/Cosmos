@@ -1,5 +1,9 @@
 ﻿using Cosmos.WorldGen.Drawing;
 using Cosmos.WorldGen.Geometry;
+using LibNoise;
+using LibNoise.Builder;
+using LibNoise.Filter;
+using LibNoise.Primitive;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using MonoGame.Extended;
@@ -15,17 +19,19 @@ namespace Cosmos.WorldGen.Map
     class HexagonTilemap
     {
         #region Fields
-        private Vector2 origin;
-        private NoiseGenerator noiseGenerator;
+        private NoiseMap heightMap, atmosphereMap;
+        private Vector2 origin, lightPosition;
         private static double SQRT3 = 1.73205080757;
         private int width, height, tileSize, seed;
+        private LODProvider lodPrivider;
         HexagonTile[,] tiles;
-        HexagonAtmosphericTile[,] atmosphericTiles;
-        private float hexagonWidth, hexagonHeight;
+        private float hexagonWidth, hexagonHeight, rotatingSpeed;
         private Dictionary<Biome.Biomes, Biome> biomes;
         private ColorMap colorMap;
         private Random random;
-        private int updateCount = 0; 
+        private int updateCount = 0;
+        private Sun sun = new Sun();
+        private bool invalidNoise = true;
         #region Terrain-gen values
         float avgTemp, tempVar, avgElevation, elevationVar, featureDensity, atmospherePresence, atmosphereDensity;
         Vector2 windDirection = new Vector2();
@@ -44,12 +50,6 @@ namespace Cosmos.WorldGen.Map
             SouthEast,
             South,
             SouthWest
-        }
-        /// <summary>
-        /// Array storage of atmospheric tiles.
-        /// </summary>
-        public HexagonAtmosphericTile[,] AtmosphericTiles {
-            get => atmosphericTiles;
         }
         /// <summary>
         /// Array storage of map tiles.
@@ -89,15 +89,36 @@ namespace Cosmos.WorldGen.Map
         /// <summary>
         /// Density of terrain features. Between 0.01 and 10.
         /// </summary>
-        public float FeatureDensity { get => featureDensity; set => featureDensity = MathHelper.Clamp(value, 0.01f, 10); }
+        public float FeatureDensity
+        {
+            get => featureDensity;
+            set
+            {
+                featureDensity = MathHelper.Clamp(value, 0.01f, 10);
+                invalidNoise = true;
+            }
+        }
         /// <summary>
         /// The amount of atmosphere gases on the map. Between 0 and 1.
         /// </summary>
-        public float AtmospherePresence { get => atmospherePresence; set => atmospherePresence = MathHelper.Clamp(value, 0, 1); }
+        public float AtmospherePresence { get => atmospherePresence; set => atmospherePresence = MathHelper.Clamp(value, 0, 1f); }
         /// <summary>
         /// The density of atmospheric features. Between 0 and 25.
         /// </summary>
-        public float AtmosphereDensity { get => atmosphereDensity; set => atmosphereDensity = MathHelper.Clamp(value, 0, 25); }
+        public float AtmosphereDensity
+        {
+            get => atmosphereDensity;
+
+            set
+            {
+                atmosphereDensity = MathHelper.Clamp(value, 0, 25);
+                invalidNoise = true;
+            }
+        }
+        /// <summary>
+        /// Rotating speed of the planet.
+        /// </summary>
+        public float RotatingSpeed { get => rotatingSpeed; set => rotatingSpeed = MathHelper.Clamp(value, 0, 10); }
         /// <summary>
         /// Map seed.
         /// </summary>
@@ -138,8 +159,11 @@ namespace Cosmos.WorldGen.Map
             this.width = width;
             this.height = height;
             tiles = new HexagonTile[width, height];
-            atmosphericTiles = new HexagonAtmosphericTile[width, height];
+            heightMap = new NoiseMap(width, height);
+            atmosphereMap = new NoiseMap(width, height);
+            lodPrivider = new LODProvider();
             this.origin = origin;
+            this.lightPosition = new Vector2((int)(width / 2), (int)(height / 2));
             for (int i = 0; i < width; i++)
             {
                 for (int j = 0; j < height; j++)
@@ -149,15 +173,12 @@ namespace Cosmos.WorldGen.Map
                         origin.Y + (float)(j * SQRT3 * tileSize / 2)), 
                         tileSize,
                         new Point(i, j));
-                    atmosphericTiles[i, j] = new HexagonAtmosphericTile(new Vector2((oddCol * 1.5f * tileSize) + origin.X + (i * 3 * tileSize),
-                        origin.Y + (float)(j * SQRT3 * tileSize / 2)),
-                        tileSize,
-                        new Point(i, j));
                     hexagonHeight = tiles[i, j].Hexagon.Height;
                     hexagonWidth = tiles[i, j].Hexagon.Width;
                 }
             }
             GenerateBiomes();
+            GenerateLODs();
             GenerateMap();
         }
         #endregion
@@ -166,12 +187,12 @@ namespace Cosmos.WorldGen.Map
         /// Called each update frame to update the map.
         /// </summary>
         /// <param name="gameTime"></param>
-        public void Update(GameTime gameTime)
+        public void Update(GameTime gameTime, RectangleF visibleArea, Camera2D camera)
         {
             updateCount++;
             if(updateCount % 5 == 0)
             {
-                GenerateAtmosphere();
+                lightPosition.X += rotatingSpeed;
             }
         }
         /// <summary>
@@ -179,7 +200,6 @@ namespace Cosmos.WorldGen.Map
         /// </summary>
         public void GenerateMap()
         {
-            noiseGenerator = new NoiseGenerator(seed);
             random = new Random(seed);
             for (int i = 0; i < width; i++)
             {
@@ -188,8 +208,13 @@ namespace Cosmos.WorldGen.Map
                     tiles[i, j].Biome = null;
                 }
             }
+            if (invalidNoise)
+            {
+                GenerateNoise();
+            }
             GenerateHeightMap();
             GenerateColors();
+            GenerateLightMask();
             GenerateAtmosphere();
         }
         /// <summary>
@@ -351,8 +376,54 @@ namespace Cosmos.WorldGen.Map
             hexagonTiles[5] = GetNeighboringTile(tile, NeighborDirections.SouthWest);
             return hexagonTiles;
         }
+        /// <summary>
+        /// Draws the map onto the spritebatch.
+        /// </summary>
+        /// <param name="spriteBatch">Spritebatch to be used for drawing.</param>
+        /// <param name="camera">Camera object.</param>
+        /// <param name="hexagonTexture">Texture of a hexagon.</param>
+        public void DrawMap(SpriteBatch spriteBatch, Camera2D camera, Texture2D hexagonTexture)
+        {
+            DrawLOD(spriteBatch, hexagonTexture, camera.BoundingRectangle, lodPrivider.GetMultiplier(camera.Zoom));
+        }
         #endregion
         #region Private Methods
+        private void GenerateLODs()
+        {
+            lodPrivider.AddLOD(0.4f, 1);
+            lodPrivider.AddLOD(0.2f, 3);
+            lodPrivider.AddLOD(0.1f, 5);
+            lodPrivider.AddLOD(0.08f, 9);
+            lodPrivider.AddLOD(0.02f, 11);
+            lodPrivider.AddLOD(0.008f, 25);
+        }
+        /// <summary>
+        /// Generate the noise values from current seed and settings.
+        /// </summary>
+        private void GenerateNoise()
+        {
+            NoiseMapBuilderSphere noiseMapBuilderSphere = new NoiseMapBuilderSphere();
+            ImprovedPerlin improvedPerlin = new ImprovedPerlin();
+            FilterModule filterModule = new SumFractal();
+            filterModule.Frequency = featureDensity;
+            filterModule.Primitive3D = improvedPerlin;
+            improvedPerlin.Quality = NoiseQuality.Best;
+            improvedPerlin.Seed = seed;
+            noiseMapBuilderSphere.SetSize(width, height);
+            noiseMapBuilderSphere.SourceModule = filterModule;
+
+            noiseMapBuilderSphere.NoiseMap = heightMap;
+            noiseMapBuilderSphere.Build();
+
+            FilterModule filterModule2 = new LibNoise.Filter.Billow();
+
+            filterModule2.Frequency = atmosphereDensity;
+            filterModule2.Primitive3D = improvedPerlin;
+            noiseMapBuilderSphere.SourceModule = filterModule2;
+
+            noiseMapBuilderSphere.NoiseMap = atmosphereMap;
+            noiseMapBuilderSphere.Build();
+        }
         /// <summary>
         /// Generates biomes to be used in terraforming.
         /// </summary>
@@ -370,12 +441,20 @@ namespace Cosmos.WorldGen.Map
             landBiome.ColorMap.AddColorValue(1f, Color.LawnGreen);
             biomes.Add(Biome.Biomes.Land, landBiome);
 
+            Biome hillsBiome = new Biome();
+            hillsBiome.ColorMap.AddColorValue(1f, Color.Green);
+            biomes.Add(Biome.Biomes.Hills, hillsBiome);
+
+            Biome forestBiome = new Biome();
+            forestBiome.ColorMap.AddColorValue(1f, Color.ForestGreen);
+            biomes.Add(Biome.Biomes.Forest, forestBiome);
+
             Biome mountainBiome = new Biome();
             mountainBiome.ColorMap.AddColorValue(1f, Color.FromNonPremultiplied(210, 105, 30, 255));
             biomes.Add(Biome.Biomes.Mountain, mountainBiome);
 
             Biome desertBiome = new Biome();
-            desertBiome.ColorMap.AddColorValue(1f, Color.LightGoldenrodYellow);
+            desertBiome.ColorMap.AddColorValue(1f, Color.FromNonPremultiplied(230, 142, 13, 255));
             biomes.Add(Biome.Biomes.Desert, desertBiome);
 
             Biome tundraBiome = new Biome();
@@ -395,96 +474,22 @@ namespace Cosmos.WorldGen.Map
         /// </summary>
         private void GenerateHeightMap()
         {
-            noiseGenerator.SetFrequency(featureDensity);
             for (int i = 0; i < width; i++)
             {
                 for (int j = 0; j < height; j++)
                 {
                     HexagonTile tile = tiles[i, j];
 
-                    float x1 = -1, x2 = 1, y1 = -1, y2 = 1;
-                    float s = (float)(i) / width;
-                    float t = (float)(j) / height;
-                    float dx = x2 - x1, dy = y2 - y1;
+                    float heightcoef = heightMap.GetValue(i, j);
+                    float tempcoef = heightcoef;
+                    float vegetationcoef = heightcoef;
 
-                    float nx = (float)(x1 + Math.Cos(s * 2 * Math.PI) * dx / (2 * Math.PI));
-                    float ny = (float)(y1 + Math.Cos(t * 2 * Math.PI) * dy / (2 * Math.PI));
-                    float nz = (float)(x1 + Math.Sin(s * 2 * Math.PI) * dx / (2 * Math.PI));
-                    float nw = (float)(y1 + Math.Sin(t * 2 * Math.PI) * dy / (2 * Math.PI));
+                    var v = ((float)Math.Abs((height / 2) - j) / (height / 2) * 2) - 1;
 
-                    float coef = noiseGenerator.GetSimplex(nx, ny, nz, nw);
-
-                    var v = 1f - ((float)Math.Abs((height / 2) - j) / (height / 2));
-
-                    tile.Height = avgElevation + coef * elevationVar;
-                    tile.Temperature = (avgTemp - coef * tempVar) * Math.Min(v * 4, 1);
-                    if (tile.Height < 0.3f)
-                    {
-                        if(tile.Temperature < 0.2f)
-                        {
-                            tile.Biome = biomes[Biome.Biomes.FrozenOcean];
-                        }
-                        else if(tile.Temperature < 0.8f)
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Ocean];
-                        }
-                        else
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Desert];
-                        }                          
-                    }
-                    else if(tile.Height < 0.35f)
-                    {
-                        if (tile.Temperature < 0.8f)
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Beach];
-                        }
-                        else
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Desert];
-                        }
-                    }
-                    else if(tile.Height < 0.7f)
-                    {
-                        if(tile.Temperature < 0.35f)
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Tundra];
-                        }
-                        else if(tile.Temperature < 0.7f)
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Land];
-                        }
-                        else
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Desert];
-                        }                       
-                    }
-                    else if(tile.Height < 0.9f)
-                    {
-                        if (tile.Temperature < 0.35f)
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Tundra];
-                        }
-                        else if (tile.Temperature < 0.7f)
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Mountain];
-                        }
-                        else
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Desert];
-                        }
-                    }
-                    else
-                    {
-                        if (tile.Temperature < 0.7f)
-                        {
-                            tile.Biome = biomes[Biome.Biomes.MountainPeak];
-                        }
-                        else
-                        {
-                            tile.Biome = biomes[Biome.Biomes.Desert];
-                        }
-                    }
+                    tile.Height = avgElevation + heightcoef * elevationVar;
+                    tile.Temperature = (avgTemp - tempcoef * tempVar - v * tempVar);
+                    tile.Vegetation = vegetationcoef;
+                    GenerateTileBiome(tile);
                 }
             }
         }
@@ -502,32 +507,112 @@ namespace Cosmos.WorldGen.Map
             }
         }
         /// <summary>
-        /// Generates clouds on tiles
+        /// Generates clouds and shadows on tiles
         /// </summary>
-        private void GenerateAtmosphere()
+        public void GenerateAtmosphere()
         {
-            noiseGenerator.SetFrequency(atmosphereDensity);
             cloudPosition += windDirection;
             for (int i = 0; i < width; i++)
             {
                 for (int j = 0; j < height; j++)
                 {
-                    HexagonAtmosphericTile tile = atmosphericTiles[i, j];
-
-                    float x1 = -1, x2 = 1, y1 = -1, y2 = 1;
-                    float s = (float)(i + cloudPosition.X) / width;
-                    float t = (float)(j + cloudPosition.Y) / height;
-                    float dx = x2 - x1, dy = y2 - y1;
-
-                    float nx = (float)(x1 + Math.Cos(s * 2 * Math.PI) * dx / (2 * Math.PI));
-                    float ny = (float)(y1 + Math.Cos(t * 2 * Math.PI) * dy / (2 * Math.PI));
-                    float nz = (float)(x1 + Math.Sin(s * 2 * Math.PI) * dx / (2 * Math.PI));
-                    float nw = (float)(y1 + Math.Sin(t * 2 * Math.PI) * dy / (2 * Math.PI));
-
-                    float coef = noiseGenerator.GetSimplex(nx, ny, nz, nw);
+                    HexagonTile tile = tiles[i, j];
+                    float coef = atmosphereMap.GetValue(i + (int)cloudPosition.X, j + (int)cloudPosition.X);
 
                     coef = (coef + 1) / 2;
-                    tile.Color = Color.White * coef * atmospherePresence;
+                    tile.AtmosphericColor = Color.White * coef * atmospherePresence;
+                    tile.Light = sun.LightValues[((int)(i + lightPosition.X) % width + width) % width, j];
+                    tile.AtmosphericLight = tile.Light;
+                    tile.Light -= (coef * atmospherePresence) * 0.7f;
+                }
+            }
+        }
+        /// <summary>
+        /// Generate clouds and shadows on given visible area.
+        /// </summary>
+        /// <param name="visibleArea">Delimiter for the update location.</param>
+        public void GenerateAtmosphere(Rectangle visibleArea, Camera2D camera)
+        {
+            GenerateAtmosphere(new RectangleF(visibleArea.Center, visibleArea.Size), camera);
+        }
+        /// <summary>
+        /// Generate clouds and shadows on given visible area.
+        /// </summary>
+        /// <param name="visibleArea">Delimiter for the update location.</param>
+        public void GenerateAtmosphere(RectangleF visibleArea, Camera2D camera)
+        {
+            GenerateAtmosphereLOD(visibleArea, lodPrivider.GetMultiplier(camera.Zoom));
+        }
+        /// <summary>
+        /// Generates the atmospheric and light values.
+        /// </summary>
+        /// <param name="visibleArea">Renctangle delimiting the visible area.</param>
+        /// <param name="lodMultiplier">Multiplier used to skip operations.</param>
+        private void GenerateAtmosphereLOD(RectangleF visibleArea, float lodMultiplier)
+        {
+            Vector2 startPos = new Vector2();
+            Vector2 endPos = new Vector2();
+            GetDrawingCoordinates(visibleArea, out startPos, out endPos);
+            startPos.X = (int)(startPos.X / lodMultiplier) * (int)lodMultiplier;
+            startPos.Y = (int)(startPos.Y / lodMultiplier) * (int)lodMultiplier;
+            cloudPosition += windDirection;
+            for (int i = (int)startPos.X; i < (int)endPos.X; i+=(int)lodMultiplier)
+            {
+                for (int j = (int)startPos.Y; j < (int)endPos.Y; j+=(int)lodMultiplier)
+                {
+                    HexagonTile tile = tiles[i, j];
+
+                    float coef = atmosphereMap.GetValue(((i + (int)cloudPosition.X) % width + width) % width,
+                        ((j + (int)cloudPosition.Y) % height + height) % height);
+
+                    coef = (coef + 1) / 2;
+                    tile.AtmosphericColor = Color.White * coef * atmospherePresence;
+                    tile.AtmosphericLight = sun.LightValues[((int)(i + lightPosition.X) % width + width) % width, j];
+                    tile.Light = tile.AtmosphericLight - (coef * atmospherePresence);
+                }
+            }
+        }
+        /// <summary>
+        /// Generate light on tile at given coordinates.
+        /// </summary>
+        /// <param name="x">X coordinate of the tile.</param>
+        /// <param name="y">Y coordinate of the tile.</param>
+        /// <param name="lightCenterX">X coordinate of light.</param>
+        /// <param name="lightCenterY">Y coordinate of light.</param>
+        /// <param name="radiusSquared">Squared radius of light.</param>
+        /// <returns></returns>
+        private float GenerateLight(int x, int y, float lightCenterX, float lightCenterY, float radiusSquared)
+        {
+            Vector2 position = new Vector2(tiles[x, y].Hexagon.Position.X, tiles[x, y].Hexagon.Position.Y);
+            position.X += hexagonWidth / 2;
+            position.Y += hexagonHeight / 2;
+            float dx = position.X - lightCenterX;
+            float dy = position.Y - lightCenterY;
+            float distanceSquared = dx * dx + dy * dy;
+            float coef = (radiusSquared - distanceSquared) / radiusSquared;
+            return coef;
+        }
+        /// <summary>
+        /// Generates the light mask to be used to draw light.
+        /// </summary>
+        private void GenerateLightMask()
+        {
+            sun.LightValues = new float[width, height];
+
+            float lightCenterX = tiles[width / 2, height / 2].Hexagon.Position.X + hexagonWidth / 2;
+            float lightCenterY = tiles[width / 2, height / 2].Hexagon.Position.Y + hexagonHeight / 2;
+            float radius = height * hexagonHeight / 3f;
+            float radiusSquared = radius * radius;
+            float halfMaxWidth = width * hexagonWidth;
+            float maxDivergence = (halfMaxWidth * halfMaxWidth) - radiusSquared;
+
+            for(int i = 0; i < width; i++)
+            {
+                for(int j = 0; j < height; j++)
+                {
+                    float factor = (float)Math.Abs(j - height / 2) / (height / 2);
+                    float divergence = (float)(Math.Pow(138, factor) - 1) / 138;
+                    sun.LightValues[i, j] = GenerateLight(i, j, lightCenterX, lightCenterY, radiusSquared + maxDivergence * divergence);
                 }
             }
         }
@@ -538,9 +623,9 @@ namespace Cosmos.WorldGen.Map
         /// <returns>Latitude respective to provided Y.</returns>
         private double YToLatitude(double y)
         {
-            return System.Math.Atan(System.Math.Exp(
-                y / 180 * System.Math.PI
-            )) / System.Math.PI * 360 - 90;
+            return Math.Atan(Math.Exp(
+                y / 180 * Math.PI
+            )) / Math.PI * 360 - 90;
         }
         /// <summary>
         /// Convert latitude to Y coordinate on plane.
@@ -552,6 +637,134 @@ namespace Cosmos.WorldGen.Map
             return System.Math.Log(System.Math.Tan(
                 (latitude + 90) / 360 * System.Math.PI
             )) / System.Math.PI * 180;
+        }
+        /// <summary>
+        /// Generate the tile biome based on the currently saved tile values.
+        /// </summary>
+        /// <param name="tile">Tile to be generated.</param>
+        private void GenerateTileBiome(HexagonTile tile)
+        {
+            if (tile.Height < 0.3f)
+            {
+                if (tile.Temperature < 0.2f)
+                {
+                    tile.Biome = biomes[Biome.Biomes.FrozenOcean];
+                }
+                else if (tile.Temperature < 0.8f)
+                {
+                    tile.Biome = biomes[Biome.Biomes.Ocean];
+                }
+                else
+                {
+                    tile.Biome = biomes[Biome.Biomes.Desert];
+                }
+            }
+            else if (tile.Height < 0.35f)
+            {
+                if (tile.Temperature < 0.8f)
+                {
+                    tile.Biome = biomes[Biome.Biomes.Beach];
+                }
+                else
+                {
+                    tile.Biome = biomes[Biome.Biomes.Desert];
+                }
+            }
+            else if (tile.Height < 0.6f)
+            {
+                if (tile.Temperature < 0.35f)
+                {
+                    tile.Biome = biomes[Biome.Biomes.Tundra];
+                }
+                else if (tile.Temperature < 0.7f)
+                {
+                    if (tile.Vegetation < 0.5f)
+                    {
+                        tile.Biome = biomes[Biome.Biomes.Land];
+                    }
+                    else
+                    {
+                        tile.Biome = biomes[Biome.Biomes.Forest];
+                    }
+                }
+                else
+                {
+                    tile.Biome = biomes[Biome.Biomes.Desert];
+                }
+            }
+            else if (tile.Height < 0.75f)
+            {
+                if (tile.Temperature < 0.35f)
+                {
+                    tile.Biome = biomes[Biome.Biomes.Tundra];
+                }
+                else if (tile.Temperature < 0.7f)
+                {
+                    if (tile.Vegetation < 0.5f)
+                    {
+                        tile.Biome = biomes[Biome.Biomes.Hills];
+                    }
+                    else
+                    {
+                        tile.Biome = biomes[Biome.Biomes.Forest];
+                    }
+                }
+                else
+                {
+                    tile.Biome = biomes[Biome.Biomes.Desert];
+                }
+            }
+            else if (tile.Height < 0.98f)
+            {
+                if (tile.Temperature < 0.7f)
+                {
+                    tile.Biome = biomes[Biome.Biomes.Mountain];
+                }
+                else
+                {
+                    tile.Biome = biomes[Biome.Biomes.Desert];
+                }
+            }
+            else
+            {
+                if (tile.Temperature < 0.7f)
+                {
+                    tile.Biome = biomes[Biome.Biomes.MountainPeak];
+                }
+                else
+                {
+                    tile.Biome = biomes[Biome.Biomes.Desert];
+                }
+            }
+        }
+        /// <summary>
+        /// Draws the map onto the spritebatch, skipping operations based on the LOD multiplier.
+        /// </summary>
+        /// <param name="spriteBatch">Spritebatch used for drawing.</param>
+        /// <param name="hexagonTexture">Hexagonal texture.</param>
+        /// <param name="boundingRectangle">Bounding rectangle defining the visible area.</param>
+        /// <param name="lodMultiplier">Multiplier used to skip drawing operations.</param>
+        private void DrawLOD(SpriteBatch spriteBatch, Texture2D hexagonTexture, RectangleF boundingRectangle, float lodMultiplier)
+        {
+            int lodTileSize = TileSize * (int)lodMultiplier;
+            Vector2 startPos, endPos;
+            GetDrawingCoordinates(boundingRectangle, out startPos, out endPos);
+            startPos.X = (int)(startPos.X / lodMultiplier) * (int)lodMultiplier;
+            startPos.Y = (int)(startPos.Y / lodMultiplier) * (int)lodMultiplier;
+            for (int i = (int)startPos.X; i < (int)endPos.X; i += (int)lodMultiplier)
+            {
+                for (int j = (int)Math.Floor(startPos.Y); j < (int)Math.Ceiling(endPos.Y); j += (int)lodMultiplier)
+                {
+                    float oddCol = j % 2;
+                    float posX = Tiles[i, j].Hexagon.Position.X + (oddCol * 1.5f * lodTileSize) - (oddCol * 1.5f * tileSize);
+                    Color color = Tiles[i, j].Color * Tiles[i, j].Light;
+                    color.A = 255;
+                    Color atmosphereColor = Tiles[i, j].AtmosphericColor * Tiles[i, j].AtmosphericLight;
+                    atmosphereColor.A = 255;
+                    spriteBatch.Draw(hexagonTexture, new Rectangle((int)posX, (int)Tiles[i, j].Hexagon.Position.Y, 2 * lodTileSize, (int)(SQRT3 * lodTileSize)), color);
+                    spriteBatch.Draw(hexagonTexture, new Rectangle((int)posX, (int)Tiles[i, j].Hexagon.Position.Y, 2 * lodTileSize, (int)(SQRT3 * lodTileSize)), atmosphereColor);
+                }
+            }
         }
         #endregion
     }

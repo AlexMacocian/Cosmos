@@ -55,15 +55,19 @@
     <Compile Include="Geometry\Hexagon.cs" />
     <Compile Include="Geometry\MercatorProjection.cs" />
     <Compile Include="Map\Biome.cs" />
-    <Compile Include="Map\HexagonAtmosphericTile.cs" />
     <Compile Include="Map\HexagonTile.cs" />
     <Compile Include="Map\HexagonTilemap.cs" />
     <Compile Include="Geometry\IDrawable.cs" />
+    <Compile Include="Map\LODProvider.cs" />
+    <Compile Include="Map\Sun.cs" />
     <Compile Include="NoiseGenerator.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="LibNoise, Version=0.2.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\LibNoise.0.2\lib\NET45\LibNoise.dll</HintPath>
+    </Reference>
     <Reference Include="MonoGame.Extended, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\packages\MonoGame.Extended.1.1.0\lib\portable-net45+win8+wpa81\MonoGame.Extended.dll</HintPath>
     </Reference>
