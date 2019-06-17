@@ -32,6 +32,7 @@ namespace Cosmos.WorldGen.Map
         private int updateCount = 0;
         private Sun sun = new Sun();
         private bool invalidNoise = true;
+        private List<Region> regions;
         #region Terrain-gen values
         float avgTemp, tempVar, avgElevation, elevationVar, featureDensity, atmospherePresence, atmosphereDensity;
         Vector2 windDirection = new Vector2();
@@ -162,6 +163,7 @@ namespace Cosmos.WorldGen.Map
             heightMap = new NoiseMap(width, height);
             atmosphereMap = new NoiseMap(width, height);
             lodPrivider = new LODProvider();
+            regions = new List<Region>();
             this.origin = origin;
             this.lightPosition = new Vector2((int)(width / 2), (int)(height / 2));
             for (int i = 0; i < width; i++)
@@ -216,6 +218,7 @@ namespace Cosmos.WorldGen.Map
             GenerateColors();
             GenerateLightMask();
             GenerateAtmosphere();
+            //GenerateRegions();
         }
         /// <summary>
         /// Method to get the tile at the specified coordinates.
@@ -386,6 +389,38 @@ namespace Cosmos.WorldGen.Map
         {
             DrawLOD(spriteBatch, hexagonTexture, camera.BoundingRectangle, lodPrivider.GetMultiplier(camera.Zoom));
         }
+        /// <summary>
+        /// Draws the map split into regons.
+        /// </summary>
+        /// <param name="spriteBatch">Spritebatch object used to draw.</param>
+        /// <param name="camera">Camera object.</param>
+        /// <param name="hexagonTexture">Texture of a hexagon.</param>
+        /// <param name="selectedRegion">Region to be focused in drawing</param>
+        public void DrawRegionalMap(SpriteBatch spriteBatch, Camera2D camera, Texture2D hexagonTexture, Region selectedRegion = null)
+        {
+            DrawRegionLOD(spriteBatch, hexagonTexture, camera.BoundingRectangle, lodPrivider.GetMultiplier(camera.Zoom), selectedRegion);
+        }
+        /// <summary>
+        /// Generates a list of regions that are neighboring the provided region.
+        /// </summary>
+        /// <param name="region">Provided region.</param>
+        /// <returns>List of regions neighboring the provided region.</returns>
+        public List<Region> GetNeighboringRegions(Region region)
+        {
+            List<Region> neighboringRegions = new List<Region>();
+
+            foreach (HexagonTile tile in region.Tiles)
+            {
+                foreach (HexagonTile neighboringtile in GetAllNeighbors(tile))
+                {
+                    if (tile.Region != neighboringtile.Region &&
+                       !neighboringRegions.Contains(neighboringtile.Region))
+                        neighboringRegions.Add(neighboringtile.Region);
+                }
+            }
+
+            return neighboringRegions;
+        }
         #endregion
         #region Private Methods
         private void GenerateLODs()
@@ -395,7 +430,7 @@ namespace Cosmos.WorldGen.Map
             lodPrivider.AddLOD(0.1f, 5);
             lodPrivider.AddLOD(0.08f, 9);
             lodPrivider.AddLOD(0.02f, 11);
-            lodPrivider.AddLOD(0.008f, 25);
+            //lodPrivider.AddLOD(0.008f, 25);
         }
         /// <summary>
         /// Generate the noise values from current seed and settings.
@@ -738,6 +773,127 @@ namespace Cosmos.WorldGen.Map
             }
         }
         /// <summary>
+        /// Generate the regions of the map. Run an algorithm to identify connected components in the map graph.
+        /// </summary>
+        private void GenerateRegions()
+        {
+            bool[,] visited = new bool[width, height];
+            Queue<HexagonTile> queue = new Queue<HexagonTile>();
+
+            /*  
+             *  Similar to an algorithm for generating connected components in an undirected graph.
+             *  Generate the regions of the map, assigining them in a list and providing the list to each
+             *  tile.
+            */
+
+            for (int i = 0; i < width; i++)
+            {
+                for (int j = 0; j < height; j++)
+                {
+                    if(!visited[i, j])
+                    {
+                        Region region = new Region(GenerateRandomColor());
+                        queue.Enqueue(tiles[i, j]);
+                        visited[i, j] = true;
+                        region.Biome = tiles[i, j].Biome;
+                        while(queue.Count > 0)
+                        {
+                            HexagonTile tile = queue.Dequeue();
+                            region.Tiles.Add(tile);
+                            tile.Region = region;
+                            foreach (HexagonTile neighboringTile in GetAllNeighbors(tile))
+                            {
+                                if (!visited[neighboringTile.Coords.X, neighboringTile.Coords.Y] &&
+                                    neighboringTile.Biome == tile.Biome)
+                                {
+                                    visited[neighboringTile.Coords.X, neighboringTile.Coords.Y] = true;
+                                    queue.Enqueue(neighboringTile);
+                                }
+                            }
+                        }
+                        regions.Add(region);
+                    }
+                }
+            }
+
+            /*  
+             *  For each generated region, now try to merge regions smaller than a parameter into their neighboring
+             *  larger regions.
+             */
+            List<Region> toRemove = new List<Region>();
+            foreach(Region region in regions)
+            {
+                if(region.Tiles.Count < width + height)
+                {
+                    var selectedRegions = GetNeighboringRegions(region);
+                    var selectedRegion = selectedRegions.Find(o => o.Tiles.Count >= width + height);
+                    foreach(HexagonTile tile in region.Tiles)
+                    {
+                        selectedRegion.Tiles.Add(tile);
+                        tile.Region = selectedRegion;
+                    }
+                    toRemove.Add(region);
+                }
+            }
+            foreach(var region in toRemove)
+            {
+                regions.Remove(region);
+            }
+
+            /*
+             * For each large land region, split it into smaller regions.
+             * This part is made to avoid having regions large as continents.
+             */
+            Array.Clear(visited, 0, visited.Length);
+            List<Region> toAdd = new List<Region>();
+            foreach(var region in regions)
+            {
+                if((region.Biome == biomes[Biome.Biomes.Land] || 
+                    region.Biome == biomes[Biome.Biomes.Hills] || 
+                    region.Biome == biomes[Biome.Biomes.Tundra] ||
+                    region.Biome == biomes[Biome.Biomes.Beach]) &&
+                    region.Tiles.Count > width)
+                {
+                    Queue<Tuple<HexagonTile, Region>> regionqueue = new Queue<Tuple<HexagonTile, Region>>();
+                    for(int i = 0; i < region.Tiles.Count / width; i++)
+                    {
+                        Region reg = new Region(GenerateRandomColor());
+                        reg.Biome = region.Biome;
+                        regionqueue.Enqueue(
+                            new Tuple<HexagonTile, Region>(
+                                region.Tiles[random.Next(0, region.Tiles.Count)],
+                                reg
+                            ));
+                        toAdd.Add(reg);
+                    }
+                    while(regionqueue.Count > 0)
+                    {
+                        var t = regionqueue.Dequeue();
+                        t.Item1.Region = t.Item2;
+                        t.Item2.Tiles.Add(t.Item1);
+                        foreach(HexagonTile neighboringTile in GetAllNeighbors(t.Item1))
+                        {
+                            if(!visited[neighboringTile.Coords.X, neighboringTile.Coords.Y] &&
+                                neighboringTile.Biome == t.Item2.Biome && 
+                                neighboringTile.Region == region)
+                            {
+                                visited[neighboringTile.Coords.X, neighboringTile.Coords.Y] = true;
+                                regionqueue.Enqueue(
+                                    new Tuple<HexagonTile, Region>(
+                                        neighboringTile,
+                                        t.Item2
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            foreach(Region region in toAdd)
+            {
+                regions.Add(region);
+            }
+        }
+        /// <summary>
         /// Draws the map onto the spritebatch, skipping operations based on the LOD multiplier.
         /// </summary>
         /// <param name="spriteBatch">Spritebatch used for drawing.</param>
@@ -765,6 +921,42 @@ namespace Cosmos.WorldGen.Map
                     spriteBatch.Draw(hexagonTexture, new Rectangle((int)posX, (int)Tiles[i, j].Hexagon.Position.Y, 2 * lodTileSize, (int)(SQRT3 * lodTileSize)), atmosphereColor);
                 }
             }
+        }
+        /// <summary>
+        /// Draws the map split into regions, skipping operations based on the LOD multiplier.
+        /// </summary>
+        /// <param name="spriteBatch">Spritebatch object used to draw.</param>
+        /// <param name="hexagonTexture">Texture of a hexagon.</param>
+        /// <param name="boundingRectangle">Visible area delimiter.</param>
+        /// <param name="lodMultiplier">LOD multiplier used to skip operations.</param>
+        /// <param name="selectedRegion">Region to be focused</param>
+        private void DrawRegionLOD(SpriteBatch spriteBatch, Texture2D hexagonTexture, RectangleF boundingRectangle, float lodMultiplier, Region selectedRegion = null)
+        {
+            int lodTileSize = TileSize * (int)lodMultiplier;
+            Vector2 startPos, endPos;
+            GetDrawingCoordinates(boundingRectangle, out startPos, out endPos);
+            startPos.X = (int)(startPos.X / lodMultiplier) * (int)lodMultiplier;
+            startPos.Y = (int)(startPos.Y / lodMultiplier) * (int)lodMultiplier;
+            for (int i = (int)startPos.X; i < (int)endPos.X; i += (int)lodMultiplier)
+            {
+                for (int j = (int)Math.Floor(startPos.Y); j < (int)Math.Ceiling(endPos.Y); j += (int)lodMultiplier)
+                {
+                    float oddCol = j % 2;
+                    float posX = Tiles[i, j].Hexagon.Position.X + (oddCol * 1.5f * lodTileSize) - (oddCol * 1.5f * tileSize);
+                    spriteBatch.Draw(hexagonTexture, new Rectangle((int)posX, (int)Tiles[i, j].Hexagon.Position.Y, 2 * lodTileSize, (int)(SQRT3 * lodTileSize)), tiles[i, j].Region != selectedRegion ? tiles[i, j].Region.Color : Color.MonoGameOrange);
+                }
+            }
+        }
+        /// <summary>
+        /// Generates a random color.
+        /// </summary>
+        /// <returns>Randomly generated color.</returns>
+        private Color GenerateRandomColor()
+        {
+            var r = (Math.Round(random.NextDouble() * 255));
+            var g = (Math.Round(random.NextDouble() * 255));
+            var b = (Math.Round(random.NextDouble() * 255));
+            return new Color((int)r, (int)g, (int)b, 255);
         }
         #endregion
     }

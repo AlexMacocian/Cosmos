@@ -59,6 +59,7 @@
     <Compile Include="Map\HexagonTilemap.cs" />
     <Compile Include="Geometry\IDrawable.cs" />
     <Compile Include="Map\LODProvider.cs" />
+    <Compile Include="Map\Region.cs" />
     <Compile Include="Map\Sun.cs" />
     <Compile Include="NoiseGenerator.cs" />
     <Compile Include="Program.cs" />

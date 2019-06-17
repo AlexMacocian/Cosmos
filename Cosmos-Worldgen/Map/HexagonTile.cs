@@ -54,6 +54,11 @@ namespace Cosmos.WorldGen.Map
         /// Biome information of the tile.
         /// </summary>
         public Biome Biome { get; set; }
+        /// <summary>
+        /// Region of the tile.
+        /// </summary>
+        public Region Region { get; set; }
+
 
         public HexagonTile(Vector2 position, float size, Point coords)
         {

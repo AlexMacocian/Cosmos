@@ -26,6 +26,7 @@ namespace Cosmos.WorldGen
         RenderTarget2D hexagonBorderTexture;
         Camera2D camera;
         double SQRT3 = 1.73205080757;
+        bool regionView = false;
 
         public Game1()
         {
@@ -53,7 +54,7 @@ namespace Cosmos.WorldGen
         protected override void LoadContent()
         {
             // Create a new SpriteBatch, which can be used to draw textures.
-            hexagonTilemap = new HexagonTilemap(new Vector2(0, 0), 1000, 1000, 50, 1337, 0.5f, 0.2f, 0.4f, 0.5f, 13f);
+            hexagonTilemap = new HexagonTilemap(new Vector2(0, 0), 100, 100, 50, 1337, 0.5f, 0.2f, 0.4f, 0.5f, 1.2f);
             spriteBatch = new SpriteBatch(GraphicsDevice);
             prevMouseState = Mouse.GetState();
             camera = new Camera2D(GraphicsDevice);
@@ -120,6 +121,14 @@ namespace Cosmos.WorldGen
             {
                 hexagonTilemap.Seed = new Random().Next();
                 hexagonTilemap.GenerateMap();
+            }
+            if (Keyboard.GetState().IsKeyDown(Keys.RightAlt))
+            {
+                regionView = true;
+            }
+            else
+            {
+                regionView = false;
             }
             if (Keyboard.GetState().IsKeyDown(Keys.OemPlus))
             {
@@ -213,6 +222,7 @@ namespace Cosmos.WorldGen
         /// <param name="gameTime">Provides a snapshot of timing values.</param>
         protected override void Draw(GameTime gameTime)
         {
+            Region selectedRegion = null;
             GraphicsDevice.Clear(Color.Black);
 
             hexagonTilemap.GenerateAtmosphere(camera.BoundingRectangle, camera);
@@ -233,9 +243,7 @@ namespace Cosmos.WorldGen
                 spriteBatch.End();
                 GraphicsDevice.SetRenderTarget(null);
             }
-            spriteBatch.Begin(SpriteSortMode.Immediate, BlendState.Additive, null, null, null, null, camera.GetViewMatrix());
-            hexagonTilemap.DrawMap(spriteBatch, camera, hexagonTexture);
-            spriteBatch.End();
+
             spriteBatch.Begin(SpriteSortMode.Texture, BlendState.Additive, null, null, null, null, camera.GetViewMatrix());
             if (Mouse.GetState().LeftButton == ButtonState.Pressed)
             {
@@ -245,12 +253,24 @@ namespace Cosmos.WorldGen
                 Vector2 position = new Vector2(tile.Hexagon.Position.X,
                         tile.Hexagon.Position.Y);
                 spriteBatch.Draw(hexagonBorderTexture, position, Color.Red);
-                foreach(HexagonTile nt in hexagonTilemap.GetAllNeighbors(tile))
+                selectedRegion = tile.Region;
+                foreach (HexagonTile nt in hexagonTilemap.GetAllNeighbors(tile))
                 {
                     Vector2 pos = new Vector2(nt.Hexagon.Position.X,
                             nt.Hexagon.Position.Y);
                     spriteBatch.Draw(hexagonBorderTexture, pos, Color.Red);
                 }
+            }
+            spriteBatch.End();
+
+            spriteBatch.Begin(SpriteSortMode.Immediate, BlendState.Additive, null, null, null, null, camera.GetViewMatrix());
+            if (regionView)
+            {
+                hexagonTilemap.DrawRegionalMap(spriteBatch, camera, hexagonTexture, selectedRegion);
+            }
+            else
+            {
+                hexagonTilemap.DrawMap(spriteBatch, camera, hexagonTexture);
             }
             spriteBatch.End();
 
